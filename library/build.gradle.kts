@@ -7,13 +7,13 @@ plugins {
     alias(libs.plugins.vanniktech.mavenPublish)
 }
 
-group = "io.github.kotlin"
-version = "1.0.0"
+group = "io.sourlabs.btc"
+version = "0.1.0"
 
 kotlin {
     jvm()
     androidLibrary {
-        namespace = "org.jetbrains.kotlinx.multiplatform.library.template"
+        namespace = "io.sourlabs.btc.wallet.library"
         compileSdk = libs.versions.android.compileSdk.get().toInt()
         minSdk = libs.versions.android.minSdk.get().toInt()
 
@@ -35,6 +35,7 @@ kotlin {
     iosArm64()
     iosSimulatorArm64()
     linuxX64()
+    linuxArm64()
 
     sourceSets {
         commonMain.dependencies {
@@ -55,28 +56,29 @@ mavenPublishing {
     coordinates(group.toString(), "library", version.toString())
 
     pom {
-        name = "My library"
-        description = "A library."
-        inceptionYear = "2024"
-        url = "https://github.com/kotlin/multiplatform-library-template/"
+        name = "Bitcoin Wallet KMP Library"
+        description = "Multiplatform library to manage a Bitcoin wallet."
+        inceptionYear = "2026"
+        url = "https://github.com/Sour-Labs/btc-wallet-kmp"
         licenses {
             license {
-                name = "XXX"
-                url = "YYY"
-                distribution = "ZZZ"
+                name = "Apache License v2.0"
+                url = "https://www.apache.org/licenses/LICENSE-2.0"
             }
+        }
+        issueManagement {
+            system.set("Github")
+            url.set("https://github.com/Sour-Labs/btc-wallet-kmp/issues")
         }
         developers {
             developer {
-                id = "XXX"
-                name = "YYY"
-                url = "ZZZ"
+                name = "Sour Labs"
+                email.set("hello@sourlabs.io")
             }
         }
         scm {
-            url = "XXX"
-            connection = "YYY"
-            developerConnection = "ZZZ"
+            url = "https://github.com/Sour-Labs/btc-wallet-kmp"
+            connection = "https://github.com/Sour-Labs/btc-wallet-kmp.git"
         }
     }
 }
