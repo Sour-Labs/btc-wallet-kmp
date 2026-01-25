@@ -40,6 +40,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             //put your multiplatform dependencies here
+            implementation(libs.acinq.bitcoin.kmp)
         }
 
         commonTest.dependencies {
