@@ -217,7 +217,7 @@ class TransactionCreator(
             txId = signedTx.txid.toString(),
             rawTx = rawTx,
             fee = unsignedTx.fee,
-            vSize = signedTx.weight() / 4
+            vSize = (signedTx.weight() + 3) / 4
         )
     }
 
@@ -279,7 +279,7 @@ class TransactionCreator(
             txId = signedTx.txid.toString(),
             rawTx = rawTx,
             fee = unsignedTx.fee,
-            vSize = signedTx.weight() / 4
+            vSize = (signedTx.weight() + 3) / 4
         )
     }
 
@@ -324,7 +324,7 @@ class TransactionCreator(
             txId = signedTx.txid.toString(),
             rawTx = rawTx,
             fee = unsignedTx.fee,
-            vSize = signedTx.weight() / 4
+            vSize = (signedTx.weight() + 3) / 4
         )
     }
 
