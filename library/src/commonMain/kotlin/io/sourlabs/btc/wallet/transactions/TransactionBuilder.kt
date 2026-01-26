@@ -143,7 +143,8 @@ class TransactionBuilder(
                 changeKey.publicKey,
                 changeKey.scriptType
             )
-            outputs.add(TxOut(Satoshi(selectionResult.change), ByteVector(changeScript)))
+            val changeAmount = selectionResult.totalInput - sendAmount - selectionResult.fee
+            outputs.add(TxOut(Satoshi(changeAmount), ByteVector(changeScript)))
             changeOutputIndex = outputs.size - 1
         }
 
