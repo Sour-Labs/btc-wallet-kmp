@@ -127,9 +127,7 @@ class TransactionProcessor(
             // Check if this input is from our wallet
             val addressInfo = addressConverter.parseAddress(prevAddress)
             if (addressInfo != null) {
-                val key = publicKeyManager.findByPublicKeyHash(
-                    extractPubKeyHash(addressInfo.scriptPubKey, addressInfo.scriptType)
-                )
+                val key = findWalletKey(addressInfo.scriptPubKey, addressInfo.scriptType)
                 if (key != null) {
                     inputAmount += prevout.value
                     isOurs = true
@@ -143,9 +141,7 @@ class TransactionProcessor(
 
             val addressInfo = addressConverter.parseAddress(address)
             if (addressInfo != null) {
-                val key = publicKeyManager.findByPublicKeyHash(
-                    extractPubKeyHash(addressInfo.scriptPubKey, addressInfo.scriptType)
-                )
+                val key = findWalletKey(addressInfo.scriptPubKey, addressInfo.scriptType)
                 if (key != null) {
                     outputAmount += vout.value
                     isOurs = true
@@ -194,27 +190,42 @@ class TransactionProcessor(
         )
     }
 
+    private suspend fun findWalletKey(scriptPubKey: ByteArray, scriptType: ScriptType): WalletPublicKey? {
+        val pubKeyHash = extractPubKeyHash(scriptPubKey, scriptType)
+        return if (pubKeyHash != null) {
+            publicKeyManager.findByPublicKeyHash(pubKeyHash)
+        } else {
+            findByScriptPubKey(scriptPubKey, scriptType)
+        }
+    }
+
+    private suspend fun findByScriptPubKey(scriptPubKey: ByteArray, scriptType: ScriptType): WalletPublicKey? {
+        val keys = publicKeyManager.getAllPublicKeys()
+        for (key in keys) {
+            if (key.scriptType != scriptType) continue
+            val keyScriptPubKey = addressConverter.createScriptPubKey(key.publicKey, key.scriptType)
+            if (keyScriptPubKey.contentEquals(scriptPubKey)) {
+                return key
+            }
+        }
+        return null
+    }
+
     /**
-     * Extract pubkey hash from scriptPubKey based on script type.
+     * Extract pubkey hash from scriptPubKey when the script embeds it directly.
      */
-    private fun extractPubKeyHash(scriptPubKey: ByteArray, scriptType: ScriptType): ByteArray {
+    private fun extractPubKeyHash(scriptPubKey: ByteArray, scriptType: ScriptType): ByteArray? {
         return when (scriptType) {
             ScriptType.P2PKH -> {
                 // OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
                 scriptPubKey.sliceArray(3 until 23)
             }
-            ScriptType.P2SH_P2WPKH -> {
-                // OP_HASH160 <20 bytes> OP_EQUAL
-                scriptPubKey.sliceArray(2 until 22)
-            }
             ScriptType.P2WPKH -> {
                 // OP_0 <20 bytes>
                 scriptPubKey.sliceArray(2 until 22)
             }
-            ScriptType.P2TR -> {
-                // OP_1 <32 bytes>
-                scriptPubKey.sliceArray(2 until 34)
-            }
+            ScriptType.P2SH_P2WPKH,
+            ScriptType.P2TR -> null
         }
     }
 
@@ -222,24 +233,33 @@ class TransactionProcessor(
      * Mark addresses as used based on transaction history.
      */
     suspend fun markAddressesUsed(transactions: List<ApiTransaction>) {
-        val usedHashes = mutableSetOf<ByteArray>()
+        val usedHashes = mutableListOf<ByteArray>()
+        val usedPaths = mutableSetOf<String>()
 
         for (tx in transactions) {
             // Check outputs
             for (vout in tx.vout) {
                 val address = vout.scriptPubKeyAddress ?: continue
                 val addressInfo = addressConverter.parseAddress(address) ?: continue
-                usedHashes.add(extractPubKeyHash(addressInfo.scriptPubKey, addressInfo.scriptType))
+                val key = findWalletKey(addressInfo.scriptPubKey, addressInfo.scriptType) ?: continue
+                if (usedPaths.add(key.path)) {
+                    usedHashes.add(key.publicKeyHash)
+                }
             }
 
             // Check inputs
             for (vin in tx.vin) {
                 val prevAddress = vin.prevout?.scriptPubKeyAddress ?: continue
                 val addressInfo = addressConverter.parseAddress(prevAddress) ?: continue
-                usedHashes.add(extractPubKeyHash(addressInfo.scriptPubKey, addressInfo.scriptType))
+                val key = findWalletKey(addressInfo.scriptPubKey, addressInfo.scriptType) ?: continue
+                if (usedPaths.add(key.path)) {
+                    usedHashes.add(key.publicKeyHash)
+                }
             }
         }
 
-        publicKeyManager.markAsUsedByHashes(usedHashes.toList())
+        if (usedHashes.isNotEmpty()) {
+            publicKeyManager.markAsUsedByHashes(usedHashes)
+        }
     }
 }
