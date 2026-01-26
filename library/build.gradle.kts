@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.android.kotlin.multiplatform.library)
     alias(libs.plugins.vanniktech.mavenPublish)
+    alias(libs.plugins.kotlinx.serialization)
 }
 
 group = "io.sourlabs.btc"
@@ -39,12 +40,51 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            //put your multiplatform dependencies here
             implementation(libs.acinq.bitcoin.kmp)
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.datetime)
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.serialization.kotlinx.json)
         }
 
         commonTest.dependencies {
             implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
+        }
+
+        jvmMain.dependencies {
+            implementation(libs.ktor.client.okhttp)
+            implementation(libs.acinq.secp256k1.jni.jvm)
+        }
+
+        jvmTest.dependencies {
+            implementation(libs.acinq.secp256k1.jni.jvm)
+        }
+
+        androidMain.dependencies {
+            implementation(libs.ktor.client.okhttp)
+            implementation(libs.acinq.secp256k1.jni.android)
+        }
+
+        // Android host tests run on the JVM, so they need the JVM JNI library
+        val androidHostTest by getting {
+            dependencies {
+                implementation(libs.acinq.secp256k1.jni.jvm)
+            }
+        }
+
+        iosMain.dependencies {
+            implementation(libs.ktor.client.darwin)
+        }
+
+        linuxX64Main.dependencies {
+            implementation(libs.ktor.client.cio)
+        }
+
+        linuxArm64Main.dependencies {
+            implementation(libs.ktor.client.cio)
         }
     }
 }
