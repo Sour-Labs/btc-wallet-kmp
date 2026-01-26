@@ -9,7 +9,6 @@ import fr.acinq.bitcoin.PublicKey
 import io.sourlabs.btc.wallet.core.WalletConfig
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
-import kotlin.random.Random
 
 /**
  * Manages HD wallet key derivation using BIP32/BIP44/BIP49/BIP84/BIP86.
@@ -219,7 +218,7 @@ class HDWalletManager private constructor(
                 24 -> 32
                 else -> throw IllegalArgumentException("Word count must be 12, 15, 18, 21, or 24")
             }
-            val entropy = Random.nextBytes(entropyBytes)
+            val entropy = secureRandomBytes(entropyBytes)
             return MnemonicCode.toMnemonics(entropy)
         }
     }
