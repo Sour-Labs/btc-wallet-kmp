@@ -95,7 +95,7 @@ class UnspentOutputSelector(
             SelectionStrategy.OLDEST_FIRST -> utxos.sortedBy { it.confirmations }.reversed()
             SelectionStrategy.LARGEST_FIRST -> utxos.sortedByDescending { it.value }
             SelectionStrategy.SMALLEST_FIRST -> utxos.sortedBy { it.value }
-            SelectionStrategy.PRIVACY_OPTIMIZED -> selectForPrivacy(utxos, targetAmount)
+            SelectionStrategy.PRIVACY_OPTIMIZED -> selectForPrivacy(utxos, targetAmount, feeRate)
         }
 
         return selectFromSorted(sortedUtxos, targetAmount, feeRate, changeOutputSize)
@@ -183,11 +183,14 @@ class UnspentOutputSelector(
 
     private fun selectForPrivacy(
         utxos: List<UnspentOutput>,
-        targetAmount: Long
+        targetAmount: Long,
+        feeRate: Long
     ): List<UnspentOutput> {
         // Simple privacy optimization: try to find a single UTXO that covers the amount
-        // to avoid linking multiple UTXOs together
-        val singleUtxo = utxos.find { it.value >= targetAmount * 1.1 } // 10% margin for fees
+        // to avoid linking multiple UTXOs together. Use the actual fee estimate so we
+        // don't prematurely stop on a UTXO that cannot fund the transaction.
+        val minimumRequired = targetAmount + estimateFee(1, 1, feeRate)
+        val singleUtxo = utxos.find { it.value >= minimumRequired }
         if (singleUtxo != null) {
             return listOf(singleUtxo)
         }
