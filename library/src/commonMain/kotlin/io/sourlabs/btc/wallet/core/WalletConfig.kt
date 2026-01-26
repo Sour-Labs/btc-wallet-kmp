@@ -77,6 +77,7 @@ sealed class WalletConfig {
             if (network != other.network) return false
             if (account != other.account) return false
             if (gapLimit != other.gapLimit) return false
+            if (confirmationsThreshold != other.confirmationsThreshold) return false
 
             return true
         }
@@ -87,6 +88,7 @@ sealed class WalletConfig {
             result = 31 * result + network.hashCode()
             result = 31 * result + account
             result = 31 * result + gapLimit
+            result = 31 * result + confirmationsThreshold
             return result
         }
     }
