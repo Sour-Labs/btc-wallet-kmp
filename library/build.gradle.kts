@@ -79,13 +79,14 @@ kotlin {
             implementation(libs.ktor.client.darwin)
         }
 
-        linuxX64Main.dependencies {
+        val linuxMain = maybeCreate("linuxMain")
+        linuxMain.dependsOn(commonMain)
+        linuxMain.dependencies {
             implementation(libs.ktor.client.cio)
         }
 
-        linuxArm64Main.dependencies {
-            implementation(libs.ktor.client.cio)
-        }
+        linuxX64Main.dependsOn(linuxMain)
+        linuxArm64Main.dependsOn(linuxMain)
     }
 }
 
