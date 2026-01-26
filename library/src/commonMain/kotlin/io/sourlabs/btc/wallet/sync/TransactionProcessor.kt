@@ -1,7 +1,14 @@
 package io.sourlabs.btc.wallet.sync
 
+import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.ByteVector32
+import fr.acinq.bitcoin.OutPoint
+import fr.acinq.bitcoin.Satoshi
+import fr.acinq.bitcoin.ScriptWitness
 import fr.acinq.bitcoin.Transaction
+import fr.acinq.bitcoin.TxId
+import fr.acinq.bitcoin.TxIn
+import fr.acinq.bitcoin.TxOut
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
 import io.sourlabs.btc.wallet.models.*
@@ -165,28 +172,81 @@ class TransactionProcessor(
             TransactionStatus.RELAYED
         }
 
-        // Parse raw transaction
-        val rawTxHex = try {
-            // We'd need to fetch raw tx, for now create from API data
-            Transaction(
-                version = apiTx.version.toLong(),
-                txIn = emptyList(), // Simplified
-                txOut = emptyList(), // Simplified
-                lockTime = apiTx.locktime
-            )
-        } catch (_: Exception) {
-            Transaction(version = 2, txIn = emptyList(), txOut = emptyList(), lockTime = 0)
-        }
+        val transaction = buildTransaction(apiTx)
 
         return WalletTransaction(
             txId = apiTx.txid,
-            transaction = rawTxHex,
+            transaction = transaction,
             blockHeight = apiTx.status.blockHeight,
             timestamp = apiTx.status.blockTime,
             status = status,
             type = type,
             amount = netAmount,
             fee = if (type != TransactionType.INCOMING) apiTx.fee else null
+        )
+    }
+
+    private fun buildTransaction(apiTx: ApiTransaction): Transaction {
+        val inputs = apiTx.vin.map { buildInput(it) }
+        val outputs = apiTx.vout.map { buildOutput(it) }
+        return Transaction(
+            version = apiTx.version.toLong(),
+            txIn = inputs,
+            txOut = outputs,
+            lockTime = apiTx.locktime
+        )
+    }
+
+    private fun buildInput(vin: ApiVin): TxIn {
+        val outPoint = buildOutPoint(vin.txid, vin.vout)
+        val scriptSig = ByteVector(hexToByteArray(vin.scriptSig))
+        val witness = ScriptWitness(
+            vin.witness.orEmpty().map { ByteVector(hexToByteArray(it)) }
+        )
+
+        return TxIn(
+            outPoint = outPoint,
+            signatureScript = scriptSig,
+            sequence = vin.sequence,
+            witness = witness
+        )
+    }
+
+    private fun buildOutput(vout: ApiVout): TxOut {
+        val scriptPubKey = ByteVector(hexToByteArray(vout.scriptPubKey))
+        return TxOut(Satoshi(vout.value), scriptPubKey)
+    }
+
+    private fun buildOutPoint(txIdHex: String?, vout: Int?): OutPoint {
+        val txId = if (txIdHex != null && vout != null) {
+            TxId(runCatching { ByteVector32.fromValidHex(txIdHex) }.getOrElse { ZERO_HASH })
+        } else {
+            TxId(ZERO_HASH)
+        }
+        val index = vout?.toLong() ?: COINBASE_OUTPOINT_INDEX
+        return OutPoint(txId, index)
+    }
+
+    private fun hexToByteArray(hex: String): ByteArray {
+        val cleanHex = hex.trim().removePrefix("0x")
+        if (cleanHex.isEmpty()) return ByteArray(0)
+
+        val evenHex = if (cleanHex.length % 2 == 0) cleanHex else "0$cleanHex"
+        val result = ByteArray(evenHex.length / 2)
+        var i = 0
+        while (i < evenHex.length) {
+            val high = evenHex[i].digitToIntOrNull(16) ?: 0
+            val low = evenHex[i + 1].digitToIntOrNull(16) ?: 0
+            result[i / 2] = ((high shl 4) or low).toByte()
+            i += 2
+        }
+        return result
+    }
+
+    private companion object {
+        private const val COINBASE_OUTPOINT_INDEX = 0xFFFFFFFFL
+        private val ZERO_HASH = ByteVector32.fromValidHex(
+            "0000000000000000000000000000000000000000000000000000000000000000"
         )
     }
 
