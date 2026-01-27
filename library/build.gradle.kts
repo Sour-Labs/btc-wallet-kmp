@@ -5,6 +5,7 @@ plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.android.kotlin.multiplatform.library)
     alias(libs.plugins.vanniktech.mavenPublish)
+    alias(libs.plugins.kotlinx.serialization)
 }
 
 group = "io.sourlabs.btc"
@@ -24,10 +25,10 @@ kotlin {
         }
 
         compilations.configureEach {
-            compilerOptions.configure {
-                jvmTarget.set(
-                    JvmTarget.JVM_11
-                )
+            compileTaskProvider.configure {
+                compilerOptions {
+                    jvmTarget.set(JvmTarget.JVM_11)
+                }
             }
         }
     }
@@ -38,13 +39,84 @@ kotlin {
     linuxArm64()
 
     sourceSets {
-        commonMain.dependencies {
-            //put your multiplatform dependencies here
-            implementation(libs.acinq.bitcoin.kmp)
+        val commonMain by getting {
+            dependencies {
+                implementation(libs.acinq.bitcoin.kmp)
+                implementation(libs.kotlinx.coroutines.core)
+                implementation(libs.kotlinx.datetime)
+                implementation(libs.kotlinx.serialization.json)
+                implementation(libs.ktor.client.core)
+                implementation(libs.ktor.client.content.negotiation)
+                implementation(libs.ktor.serialization.kotlinx.json)
+            }
         }
 
-        commonTest.dependencies {
-            implementation(libs.kotlin.test)
+        val commonTest by getting {
+            dependencies {
+                implementation(libs.kotlin.test)
+                implementation(libs.kotlinx.coroutines.test)
+            }
+        }
+
+        val jvmMain by getting {
+            dependencies {
+                implementation(libs.ktor.client.okhttp)
+                implementation(libs.acinq.secp256k1.jni.jvm)
+            }
+        }
+
+        val jvmTest by getting {
+            dependencies {
+                implementation(libs.acinq.secp256k1.jni.jvm)
+            }
+        }
+
+        val androidMain by getting {
+            dependencies {
+                implementation(libs.ktor.client.okhttp)
+                implementation(libs.acinq.secp256k1.jni.android)
+            }
+        }
+
+        // Android host tests run on the JVM, so they need the JVM JNI library
+        val androidHostTest by getting {
+            dependencies {
+                implementation(libs.acinq.secp256k1.jni.jvm)
+            }
+        }
+
+        val iosMain by creating {
+            dependsOn(commonMain)
+            dependencies {
+                implementation(libs.ktor.client.darwin)
+            }
+        }
+
+        val iosX64Main by getting {
+            dependsOn(iosMain)
+        }
+
+        val iosArm64Main by getting {
+            dependsOn(iosMain)
+        }
+
+        val iosSimulatorArm64Main by getting {
+            dependsOn(iosMain)
+        }
+
+        val linuxMain by creating {
+            dependsOn(commonMain)
+            dependencies {
+                implementation(libs.ktor.client.cio)
+            }
+        }
+
+        val linuxX64Main by getting {
+            dependsOn(linuxMain)
+        }
+
+        val linuxArm64Main by getting {
+            dependsOn(linuxMain)
         }
     }
 }
