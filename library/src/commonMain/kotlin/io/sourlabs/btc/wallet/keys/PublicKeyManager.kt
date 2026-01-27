@@ -16,6 +16,10 @@ class PublicKeyManager(
     private val storage: PublicKeyStorage,
     private val gapLimit: Int = 20
 ) {
+    init {
+        require(gapLimit > 0) { "Gap limit must be positive" }
+    }
+
     /**
      * Initialize the key pool, filling to gap limit if needed.
      */

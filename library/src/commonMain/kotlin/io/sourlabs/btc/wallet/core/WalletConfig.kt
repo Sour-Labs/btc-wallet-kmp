@@ -48,6 +48,7 @@ sealed class WalletConfig {
             require(mnemonic.size in listOf(12, 15, 18, 21, 24)) {
                 "Mnemonic must be 12, 15, 18, 21, or 24 words"
             }
+            require(gapLimit > 0) { "Gap limit must be positive" }
         }
     }
 
@@ -64,6 +65,7 @@ sealed class WalletConfig {
     ) : WalletConfig() {
         init {
             require(seed.size >= 16) { "Seed must be at least 16 bytes" }
+            require(gapLimit > 0) { "Gap limit must be positive" }
         }
 
         override fun equals(other: Any?): Boolean {
@@ -103,7 +105,11 @@ sealed class WalletConfig {
         override val account: Int = 0,
         override val gapLimit: Int = 20,
         override val confirmationsThreshold: Int = 1
-    ) : WalletConfig()
+    ) : WalletConfig() {
+        init {
+            require(gapLimit > 0) { "Gap limit must be positive" }
+        }
+    }
 
     /**
      * Create a watch-only wallet from an extended public key (xpub/ypub/zpub/tpub).
@@ -115,7 +121,11 @@ sealed class WalletConfig {
         override val account: Int = 0,
         override val gapLimit: Int = 20,
         override val confirmationsThreshold: Int = 1
-    ) : WalletConfig()
+    ) : WalletConfig() {
+        init {
+            require(gapLimit > 0) { "Gap limit must be positive" }
+        }
+    }
 
     /**
      * Whether this configuration is for a watch-only wallet.
