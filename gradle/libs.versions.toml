@@ -5,7 +5,7 @@ android-minSdk = "24"
 android-compileSdk = "36"
 vanniktechMavenPublish = "0.34.0"
 acinq-bitcoin-kmp = "0.29.0"
-acinq-secp256k1-kmp = "0.18.0"
+acinq-secp256k1-kmp = "0.22.0"
 ktor = "3.0.0"
 kotlinx-coroutines = "1.9.0"
 kotlinx-datetime = "0.6.0"
@@ -16,6 +16,7 @@ kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotl
 acinq-bitcoin-kmp = { module = "fr.acinq.bitcoin:bitcoin-kmp", version.ref = "acinq-bitcoin-kmp" }
 acinq-secp256k1-jni-jvm = { module = "fr.acinq.secp256k1:secp256k1-kmp-jni-jvm", version.ref = "acinq-secp256k1-kmp" }
 acinq-secp256k1-jni-android = { module = "fr.acinq.secp256k1:secp256k1-kmp-jni-android", version.ref = "acinq-secp256k1-kmp" }
+acinq-secp256k1-kmp = { module = "fr.acinq.secp256k1:secp256k1-kmp", version.ref = "acinq-secp256k1-kmp" }
 
 # Kotlinx
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }

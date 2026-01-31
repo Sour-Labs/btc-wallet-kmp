@@ -9,7 +9,7 @@ plugins {
 }
 
 group = "io.sourlabs.btc"
-version = "0.1.0"
+version = "0.1.2"
 
 kotlin {
     jvm()
@@ -48,6 +48,7 @@ kotlin {
                 implementation(libs.ktor.client.core)
                 implementation(libs.ktor.client.content.negotiation)
                 implementation(libs.ktor.serialization.kotlinx.json)
+                implementation(libs.acinq.secp256k1.kmp)
             }
         }
 
@@ -124,7 +125,8 @@ kotlin {
 mavenPublishing {
     publishToMavenCentral()
 
-    signAllPublications()
+    // TODO: Enable this line when created signing for publishing
+    //signAllPublications()
 
     coordinates(group.toString(), "library", version.toString())
 
