@@ -29,17 +29,19 @@ class SyncManager(
     val events: SharedFlow<WalletEvent> = _events.asSharedFlow()
 
     private var syncJob: Job? = null
-    private var api: MempoolSpaceApi? = null
+    private var api: BlockchainExplorerApi? = null
 
     private val baseUrl: String
         get() = when (val config = syncConfig) {
             is SyncConfig.MempoolSpace -> config.baseUrl
+            is SyncConfig.BlockStream -> config.baseUrl
             is SyncConfig.CustomApi -> config.baseUrl
         }
 
     private val pollingInterval: Long
         get() = when (val config = syncConfig) {
             is SyncConfig.MempoolSpace -> config.pollingIntervalMs
+            is SyncConfig.BlockStream -> config.pollingIntervalMs
             is SyncConfig.CustomApi -> config.pollingIntervalMs
         }
 
@@ -49,7 +51,7 @@ class SyncManager(
     suspend fun start(scope: CoroutineScope) {
         if (syncJob?.isActive == true) return
 
-        api = MempoolSpaceApi(baseUrl)
+        api = BlockchainExplorerApi(baseUrl)
 
         syncJob = scope.launch {
             try {

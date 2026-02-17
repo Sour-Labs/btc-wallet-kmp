@@ -9,7 +9,7 @@ import io.sourlabs.btc.wallet.models.*
 import io.sourlabs.btc.wallet.storage.InMemoryWalletStorage
 import io.sourlabs.btc.wallet.storage.WalletStorage
 import io.sourlabs.btc.wallet.sync.FeeEstimates
-import io.sourlabs.btc.wallet.sync.MempoolSpaceApi
+import io.sourlabs.btc.wallet.sync.BlockchainExplorerApi
 import io.sourlabs.btc.wallet.sync.MultiPurposeScanner
 import io.sourlabs.btc.wallet.sync.SyncManager
 import io.sourlabs.btc.wallet.sync.WalletScanResult
@@ -398,7 +398,7 @@ class BitcoinKit private constructor(
         ): WalletScanResult {
             val seed = fr.acinq.bitcoin.MnemonicCode.toSeed(mnemonic, passphrase)
             val baseUrl = apiBaseUrl ?: SyncConfig.MempoolSpace.forNetwork(network).baseUrl
-            val api = MempoolSpaceApi(baseUrl)
+            val api = BlockchainExplorerApi(baseUrl)
 
             return try {
                 val scanner = MultiPurposeScanner(seed, network, api)
