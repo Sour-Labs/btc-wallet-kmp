@@ -397,7 +397,7 @@ class BitcoinKit private constructor(
             apiBaseUrl: String? = null
         ): WalletScanResult {
             val seed = fr.acinq.bitcoin.MnemonicCode.toSeed(mnemonic, passphrase)
-            val baseUrl = apiBaseUrl ?: SyncConfig.MempoolSpace.forNetwork(network).baseUrl
+            val baseUrl = apiBaseUrl ?: SyncConfig.BlockStream.forNetwork(network).baseUrl
             val api = BlockchainExplorerApi(baseUrl)
 
             return try {
