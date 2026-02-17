@@ -9,7 +9,7 @@ import io.sourlabs.btc.wallet.storage.TransactionStorage
 import io.sourlabs.btc.wallet.storage.UnspentOutputStorage
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 
 /**
  * Manages wallet synchronization with the blockchain.
