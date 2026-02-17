@@ -1,4 +1,3 @@
-import com.android.build.api.dsl.androidLibrary
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -39,44 +38,33 @@ kotlin {
     linuxArm64()
 
     sourceSets {
-        val commonMain by getting {
-            dependencies {
-                implementation(libs.acinq.bitcoin.kmp)
-                implementation(libs.kotlinx.coroutines.core)
-                implementation(libs.kotlinx.datetime)
-                implementation(libs.kotlinx.serialization.json)
-                implementation(libs.ktor.client.core)
-                implementation(libs.ktor.client.content.negotiation)
-                implementation(libs.ktor.serialization.kotlinx.json)
-                implementation(libs.acinq.secp256k1.kmp)
-            }
+        commonMain.dependencies {
+            implementation(libs.acinq.bitcoin.kmp)
+            implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.serialization.json)
+            implementation(libs.ktor.client.core)
+            implementation(libs.ktor.client.content.negotiation)
+            implementation(libs.ktor.serialization.kotlinx.json)
+            implementation(libs.acinq.secp256k1.kmp)
         }
 
-        val commonTest by getting {
-            dependencies {
-                implementation(libs.kotlin.test)
-                implementation(libs.kotlinx.coroutines.test)
-            }
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
         }
 
-        val jvmMain by getting {
-            dependencies {
-                implementation(libs.ktor.client.okhttp)
-                implementation(libs.acinq.secp256k1.jni.jvm)
-            }
+        jvmMain.dependencies {
+            implementation(libs.ktor.client.okhttp)
+            implementation(libs.acinq.secp256k1.jni.jvm)
         }
 
-        val jvmTest by getting {
-            dependencies {
-                implementation(libs.acinq.secp256k1.jni.jvm)
-            }
+        jvmTest.dependencies {
+            implementation(libs.acinq.secp256k1.jni.jvm)
         }
 
-        val androidMain by getting {
-            dependencies {
-                implementation(libs.ktor.client.okhttp)
-                implementation(libs.acinq.secp256k1.jni.android)
-            }
+        androidMain.dependencies {
+            implementation(libs.ktor.client.okhttp)
+            implementation(libs.acinq.secp256k1.jni.android)
         }
 
         // Android host tests run on the JVM, so they need the JVM JNI library
@@ -86,38 +74,12 @@ kotlin {
             }
         }
 
-        val iosMain by creating {
-            dependsOn(commonMain)
-            dependencies {
-                implementation(libs.ktor.client.darwin)
-            }
+        iosMain.dependencies {
+            implementation(libs.ktor.client.darwin)
         }
 
-        val iosX64Main by getting {
-            dependsOn(iosMain)
-        }
-
-        val iosArm64Main by getting {
-            dependsOn(iosMain)
-        }
-
-        val iosSimulatorArm64Main by getting {
-            dependsOn(iosMain)
-        }
-
-        val linuxMain by creating {
-            dependsOn(commonMain)
-            dependencies {
-                implementation(libs.ktor.client.cio)
-            }
-        }
-
-        val linuxX64Main by getting {
-            dependsOn(linuxMain)
-        }
-
-        val linuxArm64Main by getting {
-            dependsOn(linuxMain)
+        linuxMain.dependencies {
+            implementation(libs.ktor.client.cio)
         }
     }
 }

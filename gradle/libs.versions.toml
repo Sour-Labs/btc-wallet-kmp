@@ -1,15 +1,14 @@
 [versions]
-agp = "8.13.0"
-kotlin = "2.2.20"
+agp = "9.0.1"
+kotlin = "2.3.10"
 android-minSdk = "24"
 android-compileSdk = "36"
-vanniktechMavenPublish = "0.34.0"
+vanniktechMavenPublish = "0.36.0"
 acinq-bitcoin-kmp = "0.29.0"
 acinq-secp256k1-kmp = "0.22.0"
-ktor = "3.0.0"
-kotlinx-coroutines = "1.9.0"
-kotlinx-datetime = "0.6.0"
-kotlinx-serialization = "1.7.0"
+ktor = "3.4.0"
+kotlinx-coroutines = "1.10.2"
+kotlinx-serialization = "1.10.0"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -21,7 +20,6 @@ acinq-secp256k1-kmp = { module = "fr.acinq.secp256k1:secp256k1-kmp", version.ref
 # Kotlinx
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "kotlinx-coroutines" }
-kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinx-datetime" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinx-serialization" }
 
 # Ktor
