@@ -1,7 +1,5 @@
 package io.sourlabs.btc.wallet.sync
 
-import fr.acinq.bitcoin.Crypto
-import fr.acinq.bitcoin.PublicKey
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.models.Network
@@ -60,7 +58,7 @@ data class ScanProgress(
 class MultiPurposeScanner(
     private val seed: ByteArray,
     private val network: Network,
-    private val api: MempoolSpaceApi,
+    private val api: BlockchainExplorerApi,
     private val gapLimit: Int = 20
 ) {
     /**

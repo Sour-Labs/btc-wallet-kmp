@@ -12,9 +12,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 /**
- * Mempool.space API client for blockchain data.
+ * API client for blockchain data.
  */
-class MempoolSpaceApi(
+class BlockchainExplorerApi(
     private val baseUrl: String,
     httpClient: HttpClient? = null
 ) {
