@@ -66,3 +66,10 @@ follows best practices and software design principles.
 
 If the task is unreasonable or infeasible, or if any of the tests are incorrect, please inform me 
 rather than working around them. The solution should be robust, maintainable, and extendable.
+## Local Testing (Agent Workflow)
+When verifying features as part of a pipeline:
+1. This is a library — no UI to test in a browser/emulator
+2. Run full test suite: `./gradlew allTests`
+3. For platform-specific: `./gradlew jvmTest` (fastest), `./gradlew iosSimulatorArm64Test`
+4. Verify it publishes cleanly: `./gradlew publishToMavenLocal`
+5. If changes affect Bad Wallet Client, test integration by updating the dependency there and building
