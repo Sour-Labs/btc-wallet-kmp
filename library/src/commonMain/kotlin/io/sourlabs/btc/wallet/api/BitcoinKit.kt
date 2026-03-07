@@ -373,20 +373,6 @@ class BitcoinKit private constructor(
         fun builder(config: WalletConfig): Builder = Builder(config)
 
         /**
-         * Generate a new mnemonic phrase.
-         */
-        fun generateMnemonic(wordCount: Int = 24): List<String> {
-            return HDWalletManager.generateMnemonic(wordCount)
-        }
-
-        /**
-         * Validate a mnemonic phrase.
-         */
-        fun validateMnemonic(mnemonic: List<String>): Boolean {
-            return HDWalletManager.validateMnemonic(mnemonic)
-        }
-
-        /**
          * Scan for existing wallet activity across all address types.
          * Useful during wallet restoration to discover funds.
          */
