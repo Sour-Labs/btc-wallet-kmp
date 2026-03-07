@@ -18,6 +18,7 @@ ACINQ bitcoin-kmp library as the core Bitcoin implementation.
 
 # Run tests for specific platforms
 ./gradlew jvmTest
+./gradlew testAndroidHostTest
 ./gradlew iosSimulatorArm64Test
 ./gradlew linuxX64Test
 
