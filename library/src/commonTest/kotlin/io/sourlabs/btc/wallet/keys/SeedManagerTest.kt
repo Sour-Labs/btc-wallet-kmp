@@ -78,7 +78,7 @@ class SeedManagerTest {
     @Test
     fun testGenerateMnemonicCodeDefaultSize() {
         val mnemonic = SeedManager.generateMnemonicCode()
-        assertEquals(12, mnemonic.size)
+        assertEquals(24, mnemonic.size)
     }
 
     @Test

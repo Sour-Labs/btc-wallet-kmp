@@ -65,7 +65,7 @@ object SeedManager {
      *
      * TODO: Support more languages
      *
-     * @param mnemonicSize The desired size of the mnemonic. Defaults to [MnemonicSize.Min] with 12 words.
+     * @param mnemonicSize The desired size of the mnemonic. Defaults to [MnemonicSize.Max] with 24 words.
      * @return A list of strings representing the mnemonic code.
      */
     fun generateMnemonicCode(mnemonicSize: MnemonicSize = MnemonicSize.Max): List<String> {
@@ -86,6 +86,7 @@ object SeedManager {
      * @throws IllegalArgumentException if the mnemonic is not valid.
      */
     fun List<String>.toSeed(passphrase: String = ""): ByteArray {
+        this.validate()
         return MnemonicCode.toSeed(this, passphrase)
     }
 
