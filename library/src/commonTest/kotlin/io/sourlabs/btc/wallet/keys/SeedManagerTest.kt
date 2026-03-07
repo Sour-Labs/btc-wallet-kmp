@@ -185,7 +185,7 @@ class SeedManagerTest {
         // BIP39 test vector: mnemonic "abandon" x11 + "about", no passphrase
         // Expected seed from the BIP39 specification
         val seed = validMnemonic12.toSeed()
-        val seedHex = seed.joinToString("") { "%02x".format(it) }
+        val seedHex = seed.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
         assertEquals(
             "5eb00bbddcf069084889a8ab9155568165f5c453ccb85e70811aaed6f6da5fc19a5ac40b389cd370d086206dec8aa6c43daea6690f20ad3d8d48b2d2ce9e38e4",
             seedHex
@@ -196,7 +196,7 @@ class SeedManagerTest {
     fun testToSeedWithPassphraseMatchesBip39TestVector() {
         // BIP39 test vector: mnemonic "abandon" x11 + "about", passphrase "TREZOR"
         val seed = validMnemonic12.toSeed("TREZOR")
-        val seedHex = seed.joinToString("") { "%02x".format(it) }
+        val seedHex = seed.joinToString("") { (it.toInt() and 0xFF).toString(16).padStart(2, '0') }
         assertEquals(
             "c55257c360c07c72029aebc1b53c05ed0362ada38ead3e3e9efa3708e534955" +
                 "31f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04",
