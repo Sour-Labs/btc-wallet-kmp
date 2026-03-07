@@ -4,7 +4,6 @@ import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.DeterministicWallet
 import fr.acinq.bitcoin.DeterministicWallet.ExtendedPrivateKey
 import fr.acinq.bitcoin.DeterministicWallet.ExtendedPublicKey
-import fr.acinq.bitcoin.MnemonicCode
 import fr.acinq.bitcoin.PublicKey
 import io.sourlabs.btc.wallet.core.WalletConfig
 import io.sourlabs.btc.wallet.keys.SeedManager.toSeed
