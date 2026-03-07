@@ -4,9 +4,9 @@ import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.DeterministicWallet
 import fr.acinq.bitcoin.DeterministicWallet.ExtendedPrivateKey
 import fr.acinq.bitcoin.DeterministicWallet.ExtendedPublicKey
-import fr.acinq.bitcoin.MnemonicCode
 import fr.acinq.bitcoin.PublicKey
 import io.sourlabs.btc.wallet.core.WalletConfig
+import io.sourlabs.btc.wallet.keys.SeedManager.toSeed
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
 
@@ -118,7 +118,7 @@ class HDWalletManager private constructor(
             network: Network = Network.MAINNET,
             account: Int = 0
         ): HDWalletManager {
-            val seed = MnemonicCode.toSeed(mnemonic, passphrase)
+            val seed = mnemonic.toSeed(passphrase)
             return fromSeed(seed, purpose, network, account)
         }
 
@@ -192,34 +192,6 @@ class HDWalletManager private constructor(
                 network = network,
                 account = account
             )
-        }
-
-        /**
-         * Validate a mnemonic phrase.
-         */
-        fun validateMnemonic(mnemonic: List<String>): Boolean {
-            return try {
-                MnemonicCode.validate(mnemonic)
-                true
-            } catch (_: Exception) {
-                false
-            }
-        }
-
-        /**
-         * Generate a new mnemonic phrase.
-         */
-        fun generateMnemonic(wordCount: Int = 24): List<String> {
-            val entropyBytes = when (wordCount) {
-                12 -> 16
-                15 -> 20
-                18 -> 24
-                21 -> 28
-                24 -> 32
-                else -> throw IllegalArgumentException("Word count must be 12, 15, 18, 21, or 24")
-            }
-            val entropy = secureRandomBytes(entropyBytes)
-            return MnemonicCode.toMnemonics(entropy)
         }
     }
 }

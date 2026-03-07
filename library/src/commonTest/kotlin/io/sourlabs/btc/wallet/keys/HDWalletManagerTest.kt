@@ -16,22 +16,6 @@ class HDWalletManagerTest {
     )
 
     @Test
-    fun testMnemonicValidation() {
-        assertTrue(HDWalletManager.validateMnemonic(testMnemonic))
-    }
-
-    @Test
-    fun testMnemonicGeneration() {
-        val mnemonic12 = HDWalletManager.generateMnemonic(12)
-        assertEquals(12, mnemonic12.size)
-        assertTrue(HDWalletManager.validateMnemonic(mnemonic12))
-
-        val mnemonic24 = HDWalletManager.generateMnemonic(24)
-        assertEquals(24, mnemonic24.size)
-        assertTrue(HDWalletManager.validateMnemonic(mnemonic24))
-    }
-
-    @Test
     fun testWalletCreationFromMnemonic() {
         val wallet = HDWalletManager.fromMnemonic(
             mnemonic = testMnemonic,
