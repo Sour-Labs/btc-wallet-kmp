@@ -2,7 +2,6 @@ package io.sourlabs.btc.wallet.keys
 
 import fr.acinq.bitcoin.MnemonicCode
 import fr.acinq.bitcoin.MnemonicCode.englishWordlist
-import fr.acinq.bitcoin.crypto.Pbkdf2
 
 /**
  * Manages the creation of extended keys and key derivation.
