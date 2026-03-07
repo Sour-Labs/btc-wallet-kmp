@@ -26,7 +26,7 @@ jobs:
         run: ./gradlew jvmTest
 
       - name: Run Android host tests
-        run: ./gradlew androidHostTest
+        run: ./gradlew testAndroidHostTest
 
   ios-tests:
     name: iOS Simulator Tests
