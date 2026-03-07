@@ -68,7 +68,7 @@ object SeedManager {
      * @param mnemonicSize The desired size of the mnemonic. Defaults to [MnemonicSize.Min] with 12 words.
      * @return A list of strings representing the mnemonic code.
      */
-    fun generateMnemonicCode(mnemonicSize: MnemonicSize = MnemonicSize.Min): List<String> {
+    fun generateMnemonicCode(mnemonicSize: MnemonicSize = MnemonicSize.Max): List<String> {
         val entropy = generateEntropy(mnemonicSize.entropyLength)
         return MnemonicCode.toMnemonics(entropy)
     }
@@ -86,13 +86,7 @@ object SeedManager {
      * @throws IllegalArgumentException if the mnemonic is not valid.
      */
     fun List<String>.toSeed(passphrase: String = ""): ByteArray {
-        val mnemonicCode = this
-        mnemonicCode.validate()
-        val password = mnemonicCode.joinToString(" ").encodeToByteArray()
-        val salt = ("mnemonic$passphrase").encodeToByteArray()
-        val iterationCount = 2048
-        val keyLength = 64
-        return Pbkdf2.withHmacSha512(password, salt, iterationCount, keyLength)
+        return MnemonicCode.toSeed(this, passphrase)
     }
 
     /**

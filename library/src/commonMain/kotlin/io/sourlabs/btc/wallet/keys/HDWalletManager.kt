@@ -7,6 +7,7 @@ import fr.acinq.bitcoin.DeterministicWallet.ExtendedPublicKey
 import fr.acinq.bitcoin.MnemonicCode
 import fr.acinq.bitcoin.PublicKey
 import io.sourlabs.btc.wallet.core.WalletConfig
+import io.sourlabs.btc.wallet.keys.SeedManager.toSeed
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
 
@@ -118,7 +119,7 @@ class HDWalletManager private constructor(
             network: Network = Network.MAINNET,
             account: Int = 0
         ): HDWalletManager {
-            val seed = MnemonicCode.toSeed(mnemonic, passphrase)
+            val seed = mnemonic.toSeed(passphrase)
             return fromSeed(seed, purpose, network, account)
         }
 
