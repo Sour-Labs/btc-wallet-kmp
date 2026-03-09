@@ -62,6 +62,8 @@ class SyncManager(
     suspend fun start(scope: CoroutineScope) {
         if (syncJob?.isActive == true) return
 
+        api = BlockchainExplorerApi(baseUrl)
+
         syncJob = scope.launch {
             val lastError = tryStartWithFallbacks()
             if (lastError != null) {
@@ -91,7 +93,7 @@ class SyncManager(
     private suspend fun tryStartWithFallbacks(): Exception? {
         var lastError: Exception? = null
 
-        for (config in syncConfigs) {
+        for ((index, config) in syncConfigs.withIndex()) {
             activeSyncConfig = config
             api?.close()
             api = BlockchainExplorerApi(baseUrl)
@@ -103,12 +105,15 @@ class SyncManager(
                 throw e
             } catch (e: Exception) {
                 lastError = e
-                _events.emit(
-                    WalletEvent.WalletError(
-                        "Sync failed with ${config::class.simpleName}: ${e.message}, trying fallback...",
-                        e
+                val hasMoreFallbacks = index < syncConfigs.size - 1
+                if (hasMoreFallbacks) {
+                    _events.emit(
+                        WalletEvent.WalletError(
+                            "Sync failed with ${config::class.simpleName}: ${e.message}, trying fallback...",
+                            e
+                        )
                     )
-                )
+                }
             }
         }
 
