@@ -20,8 +20,17 @@ class SyncManager(
     private val transactionStorage: TransactionStorage,
     private val utxoStorage: UnspentOutputStorage,
     private val blockInfoStorage: BlockInfoStorage,
-    private val syncConfig: SyncConfig
+    private val syncConfigs: List<SyncConfig>
 ) {
+    constructor(
+        publicKeyManager: PublicKeyManager,
+        addressConverter: AddressConverter,
+        transactionStorage: TransactionStorage,
+        utxoStorage: UnspentOutputStorage,
+        blockInfoStorage: BlockInfoStorage,
+        syncConfig: SyncConfig
+    ) : this(publicKeyManager, addressConverter, transactionStorage, utxoStorage, blockInfoStorage, listOf(syncConfig))
+
     private val _syncState = MutableStateFlow<SyncState>(SyncState.NotSynced)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
@@ -30,35 +39,39 @@ class SyncManager(
 
     private var syncJob: Job? = null
     private var api: BlockchainExplorerApi? = null
+    private var activeSyncConfig: SyncConfig = syncConfigs.first()
 
     private val baseUrl: String
-        get() = when (val config = syncConfig) {
+        get() = when (val config = activeSyncConfig) {
             is SyncConfig.MempoolSpace -> config.baseUrl
             is SyncConfig.BlockStream -> config.baseUrl
             is SyncConfig.CustomApi -> config.baseUrl
         }
 
     private val pollingInterval: Long
-        get() = when (val config = syncConfig) {
+        get() = when (val config = activeSyncConfig) {
             is SyncConfig.MempoolSpace -> config.pollingIntervalMs
             is SyncConfig.BlockStream -> config.pollingIntervalMs
             is SyncConfig.CustomApi -> config.pollingIntervalMs
         }
 
     /**
-     * Start synchronization.
+     * Start synchronization. Tries each configured SyncConfig in order
+     * until one succeeds. If all fail, reports the last error.
      */
     suspend fun start(scope: CoroutineScope) {
         if (syncJob?.isActive == true) return
 
-        api = BlockchainExplorerApi(baseUrl)
-
         syncJob = scope.launch {
-            try {
-                // Initial full sync
-                performFullSync()
+            val lastError = tryStartWithFallbacks()
+            if (lastError != null) {
+                _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
+                _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
+                return@launch
+            }
 
-                // Start periodic polling
+            // Start periodic polling
+            try {
                 while (isActive) {
                     delay(pollingInterval)
                     performIncrementalSync()
@@ -70,6 +83,36 @@ class SyncManager(
                 _events.emit(WalletEvent.WalletError(e.message ?: "Sync failed", e))
             }
         }
+    }
+
+    /**
+     * Try each sync config in order. Returns null on success, or the last exception on total failure.
+     */
+    private suspend fun tryStartWithFallbacks(): Exception? {
+        var lastError: Exception? = null
+
+        for (config in syncConfigs) {
+            activeSyncConfig = config
+            api?.close()
+            api = BlockchainExplorerApi(baseUrl)
+
+            try {
+                performFullSync()
+                return null // success
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                lastError = e
+                _events.emit(
+                    WalletEvent.WalletError(
+                        "Sync failed with ${config::class.simpleName}: ${e.message}, trying fallback...",
+                        e
+                    )
+                )
+            }
+        }
+
+        return lastError
     }
 
     /**
