@@ -66,6 +66,7 @@ class SyncManager(
             val lastError = tryStartWithFallbacks()
             if (lastError != null) {
                 _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
+                _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
                 _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
                 return@launch
             }
