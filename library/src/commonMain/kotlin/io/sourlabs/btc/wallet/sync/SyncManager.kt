@@ -282,6 +282,13 @@ class SyncManager(
             } else {
                 // Just check unconfirmed transactions
                 checkUnconfirmedTransactions(currentHeight)
+
+                // Restore synced state if we recovered from a transient error
+                if (_syncState.value is SyncState.Error) {
+                    val syncTime = Clock.System.now().toEpochMilliseconds()
+                    _syncState.value = SyncState.Synced(syncTime)
+                    _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+                }
             }
         } catch (e: CancellationException) {
             throw e
