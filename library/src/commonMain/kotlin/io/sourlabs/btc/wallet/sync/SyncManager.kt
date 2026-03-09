@@ -75,16 +75,9 @@ class SyncManager(
             }
 
             // Start periodic polling
-            try {
-                while (isActive) {
-                    delay(pollingInterval)
-                    performIncrementalSync()
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
-                _events.emit(WalletEvent.WalletError(e.message ?: "Sync failed", e))
+            while (isActive) {
+                delay(pollingInterval)
+                performIncrementalSync()
             }
         }
     }
@@ -295,6 +288,7 @@ class SyncManager(
         } catch (e: Exception) {
             _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
             _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+            _events.emit(WalletEvent.WalletError(e.message ?: "Sync failed", e))
         }
     }
 
