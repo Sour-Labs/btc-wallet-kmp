@@ -62,8 +62,6 @@ class SyncManager(
     suspend fun start(scope: CoroutineScope) {
         if (syncJob?.isActive == true) return
 
-        api = BlockchainExplorerApi(baseUrl)
-
         syncJob = scope.launch {
             val lastError = tryStartWithFallbacks()
             if (lastError != null) {
@@ -134,7 +132,14 @@ class SyncManager(
      * Trigger a manual refresh.
      */
     suspend fun refresh() {
-        performFullSync()
+        try {
+            performFullSync()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
+            _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+        }
     }
 
     /**
@@ -258,8 +263,6 @@ class SyncManager(
             _events.emit(WalletEvent.BalanceUpdated(balance))
 
         } catch (e: Exception) {
-            _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
-            _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
             throw e
         }
     }
