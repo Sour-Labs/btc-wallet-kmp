@@ -296,14 +296,24 @@ class BitcoinKit private constructor(
      */
     class Builder(private val walletConfig: WalletConfig) {
         private var syncConfig: SyncConfig = SyncConfig.MempoolSpace.forNetwork(walletConfig.network)
+        private var fallbackSyncConfigs: MutableList<SyncConfig> = mutableListOf()
         private var storage: WalletStorage = InMemoryWalletStorage()
         private var scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
         /**
-         * Set the sync configuration.
+         * Set the primary sync configuration.
          */
         fun syncConfig(config: SyncConfig): Builder {
             this.syncConfig = config
+            return this
+        }
+
+        /**
+         * Add a fallback sync configuration. If the primary (or earlier fallbacks)
+         * fail, these will be tried in the order they were added.
+         */
+        fun addFallbackSyncConfig(config: SyncConfig): Builder {
+            this.fallbackSyncConfigs.add(config)
             return this
         }
 
@@ -344,13 +354,14 @@ class BitcoinKit private constructor(
                 utxoProvider = utxoProvider,
                 addressConverter = addressConverter
             )
+            val allSyncConfigs = listOf(syncConfig) + fallbackSyncConfigs
             val syncManager = SyncManager(
                 publicKeyManager = publicKeyManager,
                 addressConverter = addressConverter,
                 transactionStorage = storage.transactionStorage,
                 utxoStorage = storage.unspentOutputStorage,
                 blockInfoStorage = storage.blockInfoStorage,
-                syncConfig = syncConfig
+                syncConfigs = allSyncConfigs
             )
 
             return BitcoinKit(
