@@ -11,7 +11,7 @@ Built on top of [ACINQ's bitcoin-kmp](https://github.com/ACINQ/bitcoin-kmp) libr
 - **Watch-Only Wallets** - Create wallets from extended public keys (xpub/ypub/zpub)
 - **UTXO Selection** - Multiple selection strategies (automatic, oldest-first, largest-first, privacy-optimized)
 - **Transaction Creation** - Build, sign, and broadcast transactions with RBF support
-- **Blockchain Sync** - Real-time synchronization via Mempool.space API
+- **Blockchain Sync** - Real-time synchronization via BlockStream API
 - **Reactive Events** - StateFlow and SharedFlow for wallet state and events
 - **Custom Storage** - Pluggable storage interface for persistence
 
@@ -59,12 +59,13 @@ repositories {
 import io.sourlabs.btc.wallet.api.BitcoinKit
 import io.sourlabs.btc.wallet.core.WalletConfig
 import io.sourlabs.btc.wallet.core.SyncConfig
+import io.sourlabs.btc.wallet.keys.SeedManager
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
 import kotlinx.coroutines.launch
 
 // 1. Generate a new mnemonic (or use an existing one)
-val mnemonic = BitcoinKit.generateMnemonic(24)
+val mnemonic = SeedManager.generateMnemonicCode(SeedManager.MnemonicSize.Max)
 
 // 2. Create wallet configuration
 val config = WalletConfig.FromMnemonic(
@@ -76,7 +77,7 @@ val config = WalletConfig.FromMnemonic(
 
 // 3. Build the wallet
 val wallet = BitcoinKit.builder(config)
-    .syncConfig(SyncConfig.MempoolSpace.forNetwork(Network.MAINNET))
+    .syncConfig(SyncConfig.BlockStream.forNetwork(Network.MAINNET))
     .build()
 
 // 4. Start the wallet (in a coroutine scope)
@@ -367,14 +368,14 @@ val wallet = BitcoinKit.builder(config)
 
 ```kotlin
 // Mainnet (default)
-val syncConfig = SyncConfig.MempoolSpace.forNetwork(Network.MAINNET)
+val syncConfig = SyncConfig.BlockStream.forNetwork(Network.MAINNET)
 
 // Testnet
-val syncConfig = SyncConfig.MempoolSpace.forNetwork(Network.TESTNET)
+val syncConfig = SyncConfig.BlockStream.forNetwork(Network.TESTNET)
 
-// Custom Mempool.space instance
-val syncConfig = SyncConfig.MempoolSpace(
-    baseUrl = "https://my-mempool-instance.com/api",
+// Custom BlockStream instance
+val syncConfig = SyncConfig.BlockStream(
+    baseUrl = "https://my-blockstream-instance.com/api",
     pollingIntervalMs = 30_000
 )
 
