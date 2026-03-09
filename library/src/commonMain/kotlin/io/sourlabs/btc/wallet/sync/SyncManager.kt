@@ -184,87 +184,82 @@ class SyncManager(
         _syncState.value = SyncState.Syncing(0.0, "Starting sync...")
         _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
 
-        try {
-            // Get current block height
-            val blockHeight = currentApi.getBlockHeight()
-            val blockHash = currentApi.getBlockHash(blockHeight)
-            val block = currentApi.getBlock(blockHash)
+        // Get current block height
+        val blockHeight = currentApi.getBlockHeight()
+        val blockHash = currentApi.getBlockHash(blockHeight)
+        val block = currentApi.getBlock(blockHash)
 
-            // Update block info
-            val blockInfo = BlockInfo(
-                height = blockHeight,
-                hash = blockHash,
-                timestamp = block.timestamp
+        // Update block info
+        val blockInfo = BlockInfo(
+            height = blockHeight,
+            hash = blockHash,
+            timestamp = block.timestamp
+        )
+        blockInfoStorage.saveBlockInfo(blockInfo)
+        _events.emit(WalletEvent.NewBlock(blockHeight, blockHash, block.timestamp))
+
+        // Get all addresses to sync
+        val externalKeys = publicKeyManager.getExternalPublicKeys()
+        val internalKeys = publicKeyManager.getInternalPublicKeys()
+        val allKeys = externalKeys + internalKeys
+
+        val totalAddresses = allKeys.size
+        var processed = 0
+
+        // Sync each address
+        for (key in allKeys) {
+            val address = addressConverter.toAddress(key)
+
+            _syncState.value = SyncState.Syncing(
+                progress = processed.toDouble() / totalAddresses,
+                description = "Syncing address ${processed + 1}/$totalAddresses"
             )
-            blockInfoStorage.saveBlockInfo(blockInfo)
-            _events.emit(WalletEvent.NewBlock(blockHeight, blockHash, block.timestamp))
 
-            // Get all addresses to sync
-            val externalKeys = publicKeyManager.getExternalPublicKeys()
-            val internalKeys = publicKeyManager.getInternalPublicKeys()
-            val allKeys = externalKeys + internalKeys
+            try {
+                // Get transactions
+                val transactions = currentApi.getAddressTransactions(address)
+                if (transactions.isNotEmpty()) {
+                    // Mark address as used
+                    publicKeyManager.markAsUsed(key.path)
 
-            val totalAddresses = allKeys.size
-            var processed = 0
-
-            // Sync each address
-            for (key in allKeys) {
-                val address = addressConverter.toAddress(key)
-
-                _syncState.value = SyncState.Syncing(
-                    progress = processed.toDouble() / totalAddresses,
-                    description = "Syncing address ${processed + 1}/$totalAddresses"
-                )
-
-                try {
-                    // Get transactions
-                    val transactions = currentApi.getAddressTransactions(address)
-                    if (transactions.isNotEmpty()) {
-                        // Mark address as used
-                        publicKeyManager.markAsUsed(key.path)
-
-                        // Process transactions
-                        val processor = TransactionProcessor(
-                            publicKeyManager,
-                            transactionStorage,
-                            utxoStorage,
-                            addressConverter
-                        )
-                        val newTxs = processor.processTransactions(address, transactions, blockHeight)
-                        for (tx in newTxs) {
-                            if (tx.type == TransactionType.INCOMING) {
-                                _events.emit(WalletEvent.TransactionReceived(tx))
-                            }
-                        }
-                    }
-
-                    // Get UTXOs
-                    val utxos = currentApi.getAddressUtxos(address)
+                    // Process transactions
                     val processor = TransactionProcessor(
                         publicKeyManager,
                         transactionStorage,
                         utxoStorage,
                         addressConverter
                     )
-                    processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
-                } catch (e: Exception) {
-                    // Continue with other addresses on error
+                    val newTxs = processor.processTransactions(address, transactions, blockHeight)
+                    for (tx in newTxs) {
+                        if (tx.type == TransactionType.INCOMING) {
+                            _events.emit(WalletEvent.TransactionReceived(tx))
+                        }
+                    }
                 }
 
-                processed++
+                // Get UTXOs
+                val utxos = currentApi.getAddressUtxos(address)
+                val processor = TransactionProcessor(
+                    publicKeyManager,
+                    transactionStorage,
+                    utxoStorage,
+                    addressConverter
+                )
+                processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
+            } catch (e: Exception) {
+                // Continue with other addresses on error
             }
 
-            val syncTime = Clock.System.now().toEpochMilliseconds()
-            _syncState.value = SyncState.Synced(syncTime)
-            _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
-
-            // Emit balance update
-            val balance = calculateBalance()
-            _events.emit(WalletEvent.BalanceUpdated(balance))
-
-        } catch (e: Exception) {
-            throw e
+            processed++
         }
+
+        val syncTime = Clock.System.now().toEpochMilliseconds()
+        _syncState.value = SyncState.Synced(syncTime)
+        _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+
+        // Emit balance update
+        val balance = calculateBalance()
+        _events.emit(WalletEvent.BalanceUpdated(balance))
     }
 
     private suspend fun performIncrementalSync() {
@@ -282,8 +277,11 @@ class SyncManager(
                 // Just check unconfirmed transactions
                 checkUnconfirmedTransactions(currentHeight)
             }
-        } catch (_: Exception) {
-            // Silent fail for incremental sync
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
+            _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
         }
     }
 
