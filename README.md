@@ -11,7 +11,7 @@ Built on top of [ACINQ's bitcoin-kmp](https://github.com/ACINQ/bitcoin-kmp) libr
 - **Watch-Only Wallets** - Create wallets from extended public keys (xpub/ypub/zpub)
 - **UTXO Selection** - Multiple selection strategies (automatic, oldest-first, largest-first, privacy-optimized)
 - **Transaction Creation** - Build, sign, and broadcast transactions with RBF support
-- **Blockchain Sync** - Real-time synchronization via BlockStream API
+- **Blockchain Sync** - Real-time synchronization via Blockstream, Mempool.space, or custom APIs with automatic fallback
 - **Reactive Events** - StateFlow and SharedFlow for wallet state and events
 - **Custom Storage** - Pluggable storage interface for persistence
 
@@ -385,6 +385,20 @@ val syncConfig = SyncConfig.CustomApi(
     pollingIntervalMs = 60_000
 )
 ```
+
+### Fallback Sync Providers
+
+You can configure fallback sync providers that are automatically tried if the primary provider fails or times out:
+
+```kotlin
+val wallet = BitcoinKit.builder(config)
+    .syncConfig(SyncConfig.BlockStream.forNetwork(Network.MAINNET))
+    .addFallbackSyncConfig(SyncConfig.MempoolSpace.forNetwork(Network.MAINNET))
+    .addFallbackSyncConfig(SyncConfig.CustomApi("https://my-node.example.com/api"))
+    .build()
+```
+
+When sync starts, the library tries each provider in order. If the primary (BlockStream in this example) fails, it automatically falls back to MempoolSpace, then to the custom API. Fallback attempts are reported as `WalletEvent.WalletError` events so you can observe them via the `events` flow.
 
 ## Wallet Scanning
 
