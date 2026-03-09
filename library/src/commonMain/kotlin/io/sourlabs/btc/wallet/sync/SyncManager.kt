@@ -22,6 +22,9 @@ class SyncManager(
     private val blockInfoStorage: BlockInfoStorage,
     private val syncConfigs: List<SyncConfig>
 ) {
+    init {
+        require(syncConfigs.isNotEmpty()) { "At least one SyncConfig must be provided" }
+    }
     constructor(
         publicKeyManager: PublicKeyManager,
         addressConverter: AddressConverter,
@@ -180,7 +183,7 @@ class SyncManager(
     }
 
     private suspend fun performFullSync() {
-        val currentApi = api ?: return
+        val currentApi = api ?: throw IllegalStateException("API not initialized")
 
         _syncState.value = SyncState.Syncing(0.0, "Starting sync...")
         _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
