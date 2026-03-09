@@ -247,6 +247,8 @@ class SyncManager(
                     addressConverter
                 )
                 processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // Continue with other addresses on error
             }
