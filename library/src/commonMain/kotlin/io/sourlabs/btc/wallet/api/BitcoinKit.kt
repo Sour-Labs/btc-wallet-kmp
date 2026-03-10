@@ -295,7 +295,7 @@ class BitcoinKit private constructor(
      * Builder for creating BitcoinKit instances.
      */
     class Builder(private val walletConfig: WalletConfig) {
-        private var syncConfig: SyncConfig = SyncConfig.MempoolSpace.forNetwork(walletConfig.network)
+        private var syncConfig: SyncConfig = SyncConfig.BlockStream.forNetwork(walletConfig.network)
         private var fallbackSyncConfigs: MutableList<SyncConfig> = mutableListOf()
         private var storage: WalletStorage = InMemoryWalletStorage()
         private var scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
