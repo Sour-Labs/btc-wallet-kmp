@@ -212,6 +212,27 @@ class SeedManagerTest {
         }
     }
 
+    // ---- getWordlist tests ----
+
+    @Test
+    fun testGetWordlistReturns2048Words() {
+        val wordlist = SeedManager.getWordlist()
+        assertEquals(2048, wordlist.size)
+    }
+
+    @Test
+    fun testGetWordlistContainsKnownWords() {
+        val wordlist = SeedManager.getWordlist()
+        assertTrue(wordlist.contains("abandon"))
+        assertTrue(wordlist.contains("zoo"))
+    }
+
+    @Test
+    fun testGetWordlistIsSortedAlphabetically() {
+        val wordlist = SeedManager.getWordlist()
+        assertEquals(wordlist.sorted(), wordlist)
+    }
+
     // ---- Integration: generate and convert ----
 
     @Test
