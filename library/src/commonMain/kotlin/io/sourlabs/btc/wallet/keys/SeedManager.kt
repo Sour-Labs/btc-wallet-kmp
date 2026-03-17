@@ -106,4 +106,11 @@ object SeedManager {
     fun List<String>.validate(wordlist: List<String> = englishWordlist) {
         MnemonicCode.validate(mnemonics = this, wordlist = wordlist)
     }
+
+    /**
+     * Returns the BIP-39 English wordlist (2048 words).
+     *
+     * @return A list of strings representing the English mnemonic wordlist.
+     */
+    fun getWordlist(): List<String> = englishWordlist
 }
