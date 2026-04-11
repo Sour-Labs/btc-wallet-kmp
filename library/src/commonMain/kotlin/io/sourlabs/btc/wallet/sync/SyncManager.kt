@@ -48,6 +48,7 @@ class SyncManager(
         get() = when (val config = activeSyncConfig) {
             is SyncConfig.MempoolSpace -> config.baseUrl
             is SyncConfig.BlockStream -> config.baseUrl
+            is SyncConfig.MyUmbrel -> config.baseUrl
             is SyncConfig.CustomApi -> config.baseUrl
         }
 
@@ -55,6 +56,7 @@ class SyncManager(
         get() = when (val config = activeSyncConfig) {
             is SyncConfig.MempoolSpace -> config.pollingIntervalMs
             is SyncConfig.BlockStream -> config.pollingIntervalMs
+            is SyncConfig.MyUmbrel -> config.pollingIntervalMs
             is SyncConfig.CustomApi -> config.pollingIntervalMs
         }
 
