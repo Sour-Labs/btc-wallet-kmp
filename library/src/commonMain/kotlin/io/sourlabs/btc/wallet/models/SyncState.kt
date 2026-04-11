@@ -31,8 +31,39 @@ sealed class SyncState {
         /**
          * Timestamp of last successful sync.
          */
-        val lastSyncTime: Long
-    ) : SyncState()
+        val lastSyncTime: Long,
+
+        /**
+         * Warnings about sync configurations that failed before a fallback succeeded.
+         * Empty when the primary config worked without issues.
+         */
+        val warnings: List<Warning> = emptyList()
+    ) : SyncState() {
+        /**
+         * True if one or more sync configurations failed before a fallback succeeded.
+         */
+        val usedFallback: Boolean get() = warnings.isNotEmpty()
+    }
+
+    /**
+     * A sync configuration that failed during fallback.
+     */
+    data class Warning(
+        /**
+         * Simple name of the SyncConfig that failed (e.g. "MempoolSpace", "BlockStream").
+         */
+        val configName: String,
+
+        /**
+         * Description of what went wrong.
+         */
+        val message: String,
+
+        /**
+         * The underlying exception if available.
+         */
+        val cause: Throwable? = null
+    )
 
     /**
      * Sync failed with an error.

@@ -89,6 +89,7 @@ class SyncManager(
      */
     private suspend fun tryStartWithFallbacks(): Exception? {
         var lastError: Exception? = null
+        val warnings = mutableListOf<SyncState.Warning>()
 
         for ((index, config) in syncConfigs.withIndex()) {
             activeSyncConfig = config
@@ -96,13 +97,20 @@ class SyncManager(
             api = BlockchainExplorerApi(baseUrl)
 
             try {
-                performFullSync()
+                performFullSync(warnings)
                 return null // success
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 lastError = e
                 val hasMoreFallbacks = index < syncConfigs.size - 1
+                warnings.add(
+                    SyncState.Warning(
+                        configName = config::class.simpleName ?: "Unknown",
+                        message = e.message ?: "Sync failed",
+                        cause = e
+                    )
+                )
                 if (hasMoreFallbacks) {
                     _events.emit(
                         WalletEvent.WalletError(
@@ -177,7 +185,7 @@ class SyncManager(
         }
     }
 
-    private suspend fun performFullSync() {
+    private suspend fun performFullSync(warnings: List<SyncState.Warning> = emptyList()) {
         val currentApi = api ?: throw IllegalStateException("API not initialized")
 
         _syncState.value = SyncState.Syncing(0.0, "Starting sync...")
@@ -255,7 +263,7 @@ class SyncManager(
         }
 
         val syncTime = Clock.System.now().toEpochMilliseconds()
-        _syncState.value = SyncState.Synced(syncTime)
+        _syncState.value = SyncState.Synced(syncTime, warnings)
         _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
 
         // Emit balance update

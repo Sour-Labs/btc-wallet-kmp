@@ -74,7 +74,7 @@ sealed class SyncConfig {
     data class MyUmbrel(
         /**
          * Base URL for my Umbrel blockchain explorer.
-         * Default: "http://umbrel.local:3006/api" for mainnet
+         * Default: "http://umbrel.tail5605a5.ts.net:3006/api" for mainnet
          */
         val baseUrl: String = DEFAULT_MAINNET_URL,
 
@@ -84,9 +84,9 @@ sealed class SyncConfig {
         val pollingIntervalMs: Long = 30_000L
     ) : SyncConfig() {
         companion object {
-            const val DEFAULT_MAINNET_URL = "http://umbrel.local:3006/api"
-            const val DEFAULT_TESTNET_URL = "http://umbrel.local:3006/testnet/api"
-            const val DEFAULT_SIGNET_URL = "http://umbrel.local:3006/signet/api"
+            const val DEFAULT_MAINNET_URL = "http://umbrel.tail5605a5.ts.net:3006/api"
+            const val DEFAULT_TESTNET_URL = "http://umbrel.tail5605a5.ts.net:3006/testnet/api"
+            const val DEFAULT_SIGNET_URL = "http://umbrel.tail5605a5.ts.net:3006/signet/api"
 
             /**
              * Create a MyUmbrel config for the given network.
