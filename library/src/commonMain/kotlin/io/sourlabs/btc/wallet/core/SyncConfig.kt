@@ -71,6 +71,38 @@ sealed class SyncConfig {
         }
     }
 
+    data class MyUmbrel(
+        /**
+         * Base URL for my Umbrel blockchain explorer.
+         * Default: "http://umbrel.local:3006/api" for mainnet
+         */
+        val baseUrl: String = DEFAULT_MAINNET_URL,
+
+        /**
+         * Polling interval in milliseconds for checking updates.
+         */
+        val pollingIntervalMs: Long = 30_000L
+    ) : SyncConfig() {
+        companion object {
+            const val DEFAULT_MAINNET_URL = "http://umbrel.local:3006/api"
+            const val DEFAULT_TESTNET_URL = "http://umbrel.local:3006/testnet/api"
+            const val DEFAULT_SIGNET_URL = "http://umbrel.local:3006/signet/api"
+
+            /**
+             * Create a MyUmbrel config for the given network.
+             */
+            fun forNetwork(network: io.sourlabs.btc.wallet.models.Network): MyUmbrel {
+                val url = when (network) {
+                    io.sourlabs.btc.wallet.models.Network.MAINNET -> DEFAULT_MAINNET_URL
+                    io.sourlabs.btc.wallet.models.Network.TESTNET -> DEFAULT_TESTNET_URL
+                    io.sourlabs.btc.wallet.models.Network.SIGNET -> DEFAULT_SIGNET_URL
+                    io.sourlabs.btc.wallet.models.Network.REGTEST -> DEFAULT_MAINNET_URL // User should override
+                }
+                return MyUmbrel(baseUrl = url)
+            }
+        }
+    }
+
     /**
      * Custom API provider with a user-provided base URL.
      */
