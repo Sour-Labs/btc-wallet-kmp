@@ -67,10 +67,14 @@ class BitcoinKit private constructor(
 
     /**
      * Start the wallet (initialize keys and begin syncing).
+     *
+     * See [SyncMode] for per-mode behavior and preconditions.
+     * Defaults to [SyncMode.Continuous] (full sync then polling) for
+     * source compatibility with earlier versions.
      */
-    suspend fun start() {
+    suspend fun start(mode: SyncMode = SyncMode.Continuous) {
         publicKeyManager.initialize()
-        syncManager.start(scope)
+        syncManager.start(scope, mode)
     }
 
     /**
