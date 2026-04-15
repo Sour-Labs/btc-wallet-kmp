@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "io.sourlabs.btc"
-version = "0.1.2"
+version = "0.1.3"
 
 kotlin {
     jvm()
@@ -38,7 +38,7 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(libs.acinq.bitcoin.kmp)
+            api(libs.acinq.bitcoin.kmp)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.ktor.client.core)
