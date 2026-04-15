@@ -80,19 +80,22 @@ class SyncManager(
                         _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
                         _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
                         _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
+                    }
+                    if (mode == SyncMode.OneShot) {
+                        // No polling follows, so release the HTTP client eagerly instead of
+                        // holding it open until the caller remembers to call stop().
+                        api?.close()
+                        api = null
                         return@launch
                     }
-                    if (mode == SyncMode.OneShot) return@launch
-                    while (isActive) {
-                        delay(pollingInterval)
-                        performIncrementalSync()
-                    }
+                    if (lastError != null) return@launch
+                    pollLoop()
                 }
                 SyncMode.IncrementalOnly -> {
                     // Caller's contract: local storage is already fresh. Bind the API
-                    // against the first configured sync source without doing a full scan,
-                    // mark the kit Synced immediately, then start polling.
-                    activeSyncConfig = syncConfigs.first()
+                    // against the current activeSyncConfig (which may be a fallback
+                    // established by a previous Continuous/OneShot sync) without doing
+                    // a full scan, mark the kit Synced immediately, then start polling.
                     api?.close()
                     api = BlockchainExplorerApi(baseUrl)
 
@@ -100,12 +103,16 @@ class SyncManager(
                     _syncState.value = SyncState.Synced(syncTime)
                     _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
 
-                    while (isActive) {
-                        delay(pollingInterval)
-                        performIncrementalSync()
-                    }
+                    pollLoop()
                 }
             }
+        }
+    }
+
+    private suspend fun CoroutineScope.pollLoop() {
+        while (isActive) {
+            delay(pollingInterval)
+            performIncrementalSync()
         }
     }
 
