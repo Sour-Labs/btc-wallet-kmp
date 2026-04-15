@@ -61,26 +61,58 @@ class SyncManager(
         }
 
     /**
-     * Start synchronization. Tries each configured SyncConfig in order
-     * until one succeeds. If all fail, reports the last error.
+     * Start synchronization.
+     *
+     * The [mode] controls whether a full sync runs, whether polling runs, or both.
+     * See [SyncMode] for per-mode semantics and preconditions.
+     *
+     * For modes that include a full sync, tries each configured [SyncConfig] in
+     * order until one succeeds. If all fail, reports the last error.
      */
-    suspend fun start(scope: CoroutineScope) {
+    suspend fun start(scope: CoroutineScope, mode: SyncMode = SyncMode.Continuous) {
         if (syncJob?.isActive == true) return
 
         syncJob = scope.launch {
-            val lastError = tryStartWithFallbacks()
-            if (lastError != null) {
-                _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
-                _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
-                _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
-                return@launch
-            }
+            when (mode) {
+                SyncMode.OneShot, SyncMode.Continuous -> {
+                    val lastError = tryStartWithFallbacks()
+                    if (lastError != null) {
+                        _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
+                        _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+                        _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
+                    }
+                    if (mode == SyncMode.OneShot) {
+                        // No polling follows, so release the HTTP client eagerly instead of
+                        // holding it open until the caller remembers to call stop().
+                        api?.close()
+                        api = null
+                        return@launch
+                    }
+                    if (lastError != null) return@launch
+                    pollLoop()
+                }
+                SyncMode.IncrementalOnly -> {
+                    // Caller's contract: local storage is already fresh. Bind the API
+                    // against the current activeSyncConfig (which may be a fallback
+                    // established by a previous Continuous/OneShot sync) without doing
+                    // a full scan, mark the kit Synced immediately, then start polling.
+                    api?.close()
+                    api = BlockchainExplorerApi(baseUrl)
 
-            // Start periodic polling
-            while (isActive) {
-                delay(pollingInterval)
-                performIncrementalSync()
+                    val syncTime = Clock.System.now().toEpochMilliseconds()
+                    _syncState.value = SyncState.Synced(syncTime)
+                    _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+
+                    pollLoop()
+                }
             }
+        }
+    }
+
+    private suspend fun CoroutineScope.pollLoop() {
+        while (isActive) {
+            delay(pollingInterval)
+            performIncrementalSync()
         }
     }
 
