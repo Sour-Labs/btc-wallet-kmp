@@ -31,6 +31,12 @@ class BlockchainExplorerApi(
             requestTimeoutMillis = 30_000
             connectTimeoutMillis = 10_000
         }
+        // Throw ClientRequestException/ServerResponseException on non-2xx. Without
+        // this, bodyAsText() silently returns error bodies as data — e.g. blockstream
+        // returning 400 "Block not found" from /block-height/{h} during CDN lag is
+        // then passed as a hash into /block/{hash}, producing a confusing
+        // deserialization failure downstream.
+        expectSuccess = true
     }
 
     /**
