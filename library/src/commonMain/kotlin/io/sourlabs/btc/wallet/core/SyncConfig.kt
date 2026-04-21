@@ -49,12 +49,43 @@ sealed class SyncConfig {
         /**
          * Polling interval in milliseconds for checking updates.
          */
-        val pollingIntervalMs: Long = 30_000L
+        val pollingIntervalMs: Long = 30_000L,
+
+        /**
+         * OAuth2 credentials for the Blockstream Explorer Enterprise API. When set, requests
+         * attach a Bearer access token obtained via the client_credentials flow.
+         * Null means use the free, unauthenticated tier.
+         */
+        val auth: Auth? = null
     ) : SyncConfig() {
+        /**
+         * Credentials for the Blockstream Explorer Enterprise API. The secret must never be
+         * embedded in a distributed client binary — fetch it from a server you control or
+         * have the end user provide it. See README for guidance.
+         */
+        data class Auth(
+            val clientId: String,
+            val clientSecret: String,
+            val tokenUrl: String = DEFAULT_TOKEN_URL
+        ) {
+            // Prevent the data-class-generated toString() from leaking clientSecret into logs
+            // or crash reports when a BlockStream config is printed.
+            override fun toString(): String =
+                "Auth(clientId=$clientId, clientSecret=***, tokenUrl=$tokenUrl)"
+
+            companion object {
+                const val DEFAULT_TOKEN_URL =
+                    "https://login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token"
+            }
+        }
+
         companion object {
             const val DEFAULT_MAINNET_URL = "https://blockstream.info/api"
             const val DEFAULT_TESTNET_URL = "https://blockstream.info/testnet/api"
             const val DEFAULT_SIGNET_URL = "https://blockstream.info/signet/api"
+
+            const val ENTERPRISE_MAINNET_URL = "https://enterprise.blockstream.info/api"
+            const val ENTERPRISE_TESTNET_URL = "https://enterprise.blockstream.info/testnet/api"
 
             /**
              * Create a BlockStream config for the given network.
@@ -67,6 +98,29 @@ sealed class SyncConfig {
                     io.sourlabs.btc.wallet.models.Network.REGTEST -> DEFAULT_MAINNET_URL // User should override
                 }
                 return BlockStream(baseUrl = url)
+            }
+
+            /**
+             * Create a BlockStream config that hits the authenticated Enterprise tier using
+             * OAuth2 client_credentials. Enterprise only serves mainnet and testnet — SIGNET
+             * and REGTEST fall back to the free public endpoints with no auth.
+             */
+            fun enterprise(
+                network: io.sourlabs.btc.wallet.models.Network,
+                clientId: String,
+                clientSecret: String,
+                tokenUrl: String = Auth.DEFAULT_TOKEN_URL
+            ): BlockStream = when (network) {
+                io.sourlabs.btc.wallet.models.Network.MAINNET -> BlockStream(
+                    baseUrl = ENTERPRISE_MAINNET_URL,
+                    auth = Auth(clientId, clientSecret, tokenUrl)
+                )
+                io.sourlabs.btc.wallet.models.Network.TESTNET -> BlockStream(
+                    baseUrl = ENTERPRISE_TESTNET_URL,
+                    auth = Auth(clientId, clientSecret, tokenUrl)
+                )
+                io.sourlabs.btc.wallet.models.Network.SIGNET -> BlockStream(baseUrl = DEFAULT_SIGNET_URL)
+                io.sourlabs.btc.wallet.models.Network.REGTEST -> BlockStream(baseUrl = DEFAULT_MAINNET_URL)
             }
         }
     }

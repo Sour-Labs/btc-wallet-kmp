@@ -386,6 +386,31 @@ val syncConfig = SyncConfig.CustomApi(
 )
 ```
 
+### Blockstream Explorer Enterprise (paid tier)
+
+For higher rate limits, use the authenticated Enterprise endpoints. The library performs the
+OAuth2 `client_credentials` exchange, attaches the `Authorization: Bearer <token>` header to
+every request, and transparently re-fetches the token on 401 (tokens live for ~5 minutes and
+no refresh token is issued).
+
+```kotlin
+val syncConfig = SyncConfig.BlockStream.enterprise(
+    network = Network.MAINNET,
+    clientId = clientId,
+    clientSecret = clientSecret
+)
+```
+
+Enterprise only serves mainnet and testnet. `SIGNET` and `REGTEST` fall back to the public
+unauthenticated endpoints automatically.
+
+> **Never ship `clientSecret` inside a distributed client binary.** A secret bundled into an
+> Android APK, iOS IPA, or desktop build is not secret — anyone who downloads the binary can
+> extract it. For production apps with untrusted clients, run a small backend you control
+> that holds the secret and proxies Explorer API requests (or mints short-lived tokens for
+> your clients). For local development or trusted server-side use, load the credentials from
+> environment variables, platform keystores, or a secrets manager — never commit them.
+
 ### Fallback Sync Providers
 
 You can configure fallback sync providers that are automatically tried if the primary provider fails or times out:
