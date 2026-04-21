@@ -68,9 +68,14 @@ sealed class SyncConfig {
             val clientSecret: String,
             val tokenUrl: String = DEFAULT_TOKEN_URL
         ) {
+            // Prevent the data-class-generated toString() from leaking clientSecret into logs
+            // or crash reports when a BlockStream config is printed.
+            override fun toString(): String =
+                "Auth(clientId=$clientId, clientSecret=***, tokenUrl=$tokenUrl)"
+
             companion object {
                 const val DEFAULT_TOKEN_URL =
-                    "https://login.blockstream.com/realms/blockstreamPublic/protocol/openid-connect/token"
+                    "https://login.blockstream.com/realms/blockstream-public/protocol/openid-connect/token"
             }
         }
 
