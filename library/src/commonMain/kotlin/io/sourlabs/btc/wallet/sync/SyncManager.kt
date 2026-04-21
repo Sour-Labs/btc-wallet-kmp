@@ -52,6 +52,11 @@ class SyncManager(
             is SyncConfig.CustomApi -> config.baseUrl
         }
 
+    private fun buildApi(): BlockchainExplorerApi = when (val config = activeSyncConfig) {
+        is SyncConfig.BlockStream -> BlockchainExplorerApi(config)
+        else -> BlockchainExplorerApi(baseUrl)
+    }
+
     private val pollingInterval: Long
         get() = when (val config = activeSyncConfig) {
             is SyncConfig.MempoolSpace -> config.pollingIntervalMs
@@ -97,7 +102,7 @@ class SyncManager(
                     // established by a previous Continuous/OneShot sync) without doing
                     // a full scan, mark the kit Synced immediately, then start polling.
                     api?.close()
-                    api = BlockchainExplorerApi(baseUrl)
+                    api = buildApi()
 
                     val syncTime = Clock.System.now().toEpochMilliseconds()
                     _syncState.value = SyncState.Synced(syncTime)
@@ -126,7 +131,7 @@ class SyncManager(
         for ((index, config) in syncConfigs.withIndex()) {
             activeSyncConfig = config
             api?.close()
-            api = BlockchainExplorerApi(baseUrl)
+            api = buildApi()
 
             try {
                 performFullSync(warnings)

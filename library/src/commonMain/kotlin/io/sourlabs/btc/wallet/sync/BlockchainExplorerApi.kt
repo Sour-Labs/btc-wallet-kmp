@@ -3,10 +3,15 @@ package io.sourlabs.btc.wallet.sync
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.plugins.*
+import io.ktor.client.plugins.auth.*
+import io.ktor.client.plugins.auth.providers.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
+import io.ktor.client.request.forms.*
 import io.ktor.client.statement.*
+import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import io.sourlabs.btc.wallet.core.SyncConfig
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -14,13 +19,32 @@ import kotlinx.serialization.json.Json
 /**
  * API client for blockchain data.
  */
-class BlockchainExplorerApi(
+class BlockchainExplorerApi private constructor(
     private val baseUrl: String,
-    httpClient: HttpClient? = null
+    private val auth: SyncConfig.BlockStream.Auth?,
+    httpClient: HttpClient?
 ) {
+    constructor(baseUrl: String, httpClient: HttpClient? = null) : this(baseUrl, null, httpClient)
+
+    constructor(config: SyncConfig.BlockStream, httpClient: HttpClient? = null) :
+        this(config.baseUrl, config.auth, httpClient)
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
+    }
+
+    // Separate client for the token endpoint so the auth plugin doesn't recurse into itself
+    // when fetching/refreshing a token. Only created when auth is configured.
+    private val tokenClient: HttpClient? = auth?.let {
+        HttpClient {
+            install(ContentNegotiation) { json(json) }
+            install(HttpTimeout) {
+                requestTimeoutMillis = 30_000
+                connectTimeoutMillis = 10_000
+            }
+            expectSuccess = true
+        }
     }
 
     private val client = httpClient ?: HttpClient {
@@ -31,12 +55,37 @@ class BlockchainExplorerApi(
             requestTimeoutMillis = 30_000
             connectTimeoutMillis = 10_000
         }
+        if (auth != null) {
+            install(Auth) {
+                bearer {
+                    loadTokens { fetchToken(auth) }
+                    refreshTokens { fetchToken(auth) }
+                    sendWithoutRequest { true }
+                }
+            }
+        }
         // Throw ClientRequestException/ServerResponseException on non-2xx. Without
         // this, bodyAsText() silently returns error bodies as data — e.g. blockstream
         // returning 400 "Block not found" from /block-height/{h} during CDN lag is
         // then passed as a hash into /block/{hash}, producing a confusing
         // deserialization failure downstream.
         expectSuccess = true
+    }
+
+    private suspend fun fetchToken(auth: SyncConfig.BlockStream.Auth): BearerTokens {
+        val response: TokenResponse = tokenClient!!.submitForm(
+            url = auth.tokenUrl,
+            formParameters = Parameters.build {
+                append("client_id", auth.clientId)
+                append("client_secret", auth.clientSecret)
+                append("grant_type", "client_credentials")
+                append("scope", "openid")
+            }
+        ).body()
+        // Enterprise tokens have no refresh token (refresh_expires_in = 0); re-running
+        // client_credentials in refreshTokens{} is how we renew. BearerTokens requires a
+        // non-null refresh value, so pass the access token itself — it's never actually used.
+        return BearerTokens(response.accessToken, response.accessToken)
     }
 
     /**
@@ -122,8 +171,16 @@ class BlockchainExplorerApi(
 
     fun close() {
         client.close()
+        tokenClient?.close()
     }
 }
+
+@Serializable
+private data class TokenResponse(
+    @SerialName("access_token") val accessToken: String,
+    @SerialName("expires_in") val expiresIn: Int = 0,
+    @SerialName("token_type") val tokenType: String = "Bearer"
+)
 
 // API Response Models
 
