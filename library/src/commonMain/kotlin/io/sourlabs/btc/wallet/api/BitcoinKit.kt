@@ -395,11 +395,15 @@ class BitcoinKit private constructor(
             mnemonic: List<String>,
             passphrase: String = "",
             network: Network = Network.MAINNET,
-            apiBaseUrl: String? = null
+            apiBaseUrl: String? = null,
+            blockStreamConfig: SyncConfig.BlockStream? = null
         ): WalletScanResult {
             val seed = fr.acinq.bitcoin.MnemonicCode.toSeed(mnemonic, passphrase)
-            val baseUrl = apiBaseUrl ?: SyncConfig.BlockStream.forNetwork(network).baseUrl
-            val api = BlockchainExplorerApi(baseUrl)
+            val api = when {
+                blockStreamConfig != null -> BlockchainExplorerApi(blockStreamConfig)
+                apiBaseUrl != null -> BlockchainExplorerApi(apiBaseUrl)
+                else -> BlockchainExplorerApi(SyncConfig.BlockStream.forNetwork(network).baseUrl)
+            }
 
             return try {
                 val scanner = MultiPurposeScanner(seed, network, api)
