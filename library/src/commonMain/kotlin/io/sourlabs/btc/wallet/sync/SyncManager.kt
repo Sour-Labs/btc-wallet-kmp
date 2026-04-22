@@ -215,6 +215,7 @@ class SyncManager(
      * Get current block height.
      */
     suspend fun getCurrentBlockHeight(): Int? {
+        blockInfoStorage.getLastBlockInfo()?.height?.let { return it }
         return try {
             api?.getBlockHeight()
         } catch (_: Exception) {
@@ -321,7 +322,7 @@ class SyncManager(
                 performFullSync()
             } else {
                 // Just check unconfirmed transactions
-                checkUnconfirmedTransactions(currentHeight)
+                checkUnconfirmedTransactions()
 
                 // Restore synced state if we recovered from a transient error
                 if (_syncState.value is SyncState.Error) {
@@ -339,7 +340,7 @@ class SyncManager(
         }
     }
 
-    private suspend fun checkUnconfirmedTransactions(currentHeight: Int) {
+    private suspend fun checkUnconfirmedTransactions() {
         val unconfirmed = transactionStorage.getUnconfirmedTransactions()
 
         for (tx in unconfirmed) {
