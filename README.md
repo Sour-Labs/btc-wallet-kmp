@@ -430,10 +430,11 @@ When sync starts, the library tries each provider in order. If the primary (Bloc
 The library minimizes calls to the Blockchain Explorer in a few ways:
 
 - **Single-call block-tip lookup.** A full sync fetches tip metadata (height, hash, timestamp) via a single `GET /blocks` call, instead of the three round-trips (`/blocks/tip/height`, `/block-height/{h}`, `/block/{hash}`) that a naive Esplora client would make.
-- **Gap-address pruning.** Before fetching transactions and UTXOs for each address in the gap-limit pool, a cheap `GET /address/{addr}` probe checks for any on-chain or mempool activity. Addresses with zero history skip the per-address `/txs` and `/utxo` calls entirely.
+- **Per-address probing.** For each address in the gap-limit pool, a cheap `GET /address/{addr}` call reads the current confirmed and mempool tx counts. The expensive per-address calls (`/txs`, `/utxo`) only fire when those counts have actually changed since the last sync.
+- **Delta tx fetching.** When new confirmed transactions are detected, the library paginates `GET /address/{addr}/txs/chain` and stops as soon as it sees the last-known txid — so subsequent syncs of an active address only fetch the new transactions, not the full history.
 - **Cached block height.** `getCurrentBlockHeight()` returns the tip cached by the sync loop in local storage, falling back to the network only before the first sync completes.
 
-With the default gap limit of 20, a full sync of a fresh wallet drops from ~83 calls to ~41 (a single block-tip call plus one probe per address). Wallets with a few active addresses see proportional reductions.
+With the default gap limit of 20, a steady-state full sync of any wallet (fresh or active) costs ~41 calls (one block-tip call plus one probe per address). The full per-address fetch only fires when an address has actually changed.
 
 ## Wallet Scanning
 

@@ -91,6 +91,18 @@ class PublicKeyManager(
     }
 
     /**
+     * Persist the per-address sync state used by the delta-fetch algorithm.
+     */
+    suspend fun recordSyncState(
+        path: String,
+        chainTxCount: Int,
+        mempoolTxCount: Int,
+        chainTipTxid: String?
+    ) {
+        storage.updateSyncState(path, chainTxCount, mempoolTxCount, chainTipTxid)
+    }
+
+    /**
      * Mark keys as used by their public key hashes.
      */
     suspend fun markAsUsedByHashes(hashes: List<ByteArray>) {
