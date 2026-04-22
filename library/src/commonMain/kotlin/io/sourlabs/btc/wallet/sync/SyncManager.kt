@@ -231,7 +231,8 @@ class SyncManager(
 
         // Fetch tip metadata in a single call. /blocks returns the 10 most recent
         // blocks with full info; we only need the first.
-        val tip = currentApi.getBlocks().first()
+        val tip = currentApi.getBlocks().firstOrNull()
+            ?: error("Esplora /blocks returned an empty response; backend may be misconfigured")
         val blockHeight = tip.height
         val blockInfo = BlockInfo(
             height = tip.height,
