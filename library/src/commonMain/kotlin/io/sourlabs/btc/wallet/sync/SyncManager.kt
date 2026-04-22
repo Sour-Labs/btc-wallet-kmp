@@ -229,19 +229,17 @@ class SyncManager(
         _syncState.value = SyncState.Syncing(0.0, "Starting sync...")
         _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
 
-        // Get current block height
-        val blockHeight = currentApi.getBlockHeight()
-        val blockHash = currentApi.getBlockHash(blockHeight)
-        val block = currentApi.getBlock(blockHash)
-
-        // Update block info
+        // Fetch tip metadata in a single call. /blocks returns the 10 most recent
+        // blocks with full info; we only need the first.
+        val tip = currentApi.getBlocks().first()
+        val blockHeight = tip.height
         val blockInfo = BlockInfo(
-            height = blockHeight,
-            hash = blockHash,
-            timestamp = block.timestamp
+            height = tip.height,
+            hash = tip.id,
+            timestamp = tip.timestamp
         )
         blockInfoStorage.saveBlockInfo(blockInfo)
-        _events.emit(WalletEvent.NewBlock(blockHeight, blockHash, block.timestamp))
+        _events.emit(WalletEvent.NewBlock(tip.height, tip.id, tip.timestamp))
 
         // Get all addresses to sync
         val externalKeys = publicKeyManager.getExternalPublicKeys()
@@ -261,36 +259,41 @@ class SyncManager(
             )
 
             try {
-                // Get transactions
-                val transactions = currentApi.getAddressTransactions(address)
-                if (transactions.isNotEmpty()) {
-                    // Mark address as used
-                    publicKeyManager.markAsUsed(key.path)
+                // Cheap probe: skip /txs and /utxo entirely for addresses with no history.
+                val addressInfo = currentApi.getAddress(address)
+                val totalTxCount = addressInfo.chainStats.txCount + addressInfo.mempoolStats.txCount
+                if (totalTxCount > 0) {
+                    // Get transactions
+                    val transactions = currentApi.getAddressTransactions(address)
+                    if (transactions.isNotEmpty()) {
+                        // Mark address as used
+                        publicKeyManager.markAsUsed(key.path)
 
-                    // Process transactions
+                        // Process transactions
+                        val processor = TransactionProcessor(
+                            publicKeyManager,
+                            transactionStorage,
+                            utxoStorage,
+                            addressConverter
+                        )
+                        val newTxs = processor.processTransactions(address, transactions, blockHeight)
+                        for (tx in newTxs) {
+                            if (tx.type == TransactionType.INCOMING) {
+                                _events.emit(WalletEvent.TransactionReceived(tx))
+                            }
+                        }
+                    }
+
+                    // Get UTXOs
+                    val utxos = currentApi.getAddressUtxos(address)
                     val processor = TransactionProcessor(
                         publicKeyManager,
                         transactionStorage,
                         utxoStorage,
                         addressConverter
                     )
-                    val newTxs = processor.processTransactions(address, transactions, blockHeight)
-                    for (tx in newTxs) {
-                        if (tx.type == TransactionType.INCOMING) {
-                            _events.emit(WalletEvent.TransactionReceived(tx))
-                        }
-                    }
+                    processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
                 }
-
-                // Get UTXOs
-                val utxos = currentApi.getAddressUtxos(address)
-                val processor = TransactionProcessor(
-                    publicKeyManager,
-                    transactionStorage,
-                    utxoStorage,
-                    addressConverter
-                )
-                processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
