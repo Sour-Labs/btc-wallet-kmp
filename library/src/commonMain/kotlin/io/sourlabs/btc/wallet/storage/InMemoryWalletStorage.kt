@@ -50,6 +50,21 @@ private class InMemoryPublicKeyStorage : PublicKeyStorage {
         }
     }
 
+    override suspend fun updateSyncState(
+        path: String,
+        chainTxCount: Int,
+        mempoolTxCount: Int,
+        chainTipTxid: String?
+    ) {
+        keys[path]?.let { key ->
+            keys[path] = key.copy(
+                lastSyncedChainTxCount = chainTxCount,
+                lastSyncedMempoolTxCount = mempoolTxCount,
+                lastSyncedChainTipTxid = chainTipTxid
+            )
+        }
+    }
+
     override suspend fun clear() {
         keys.clear()
     }

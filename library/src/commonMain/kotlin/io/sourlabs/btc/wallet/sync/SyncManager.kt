@@ -11,6 +11,12 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlin.time.Clock
 
+// Esplora returns up to 25 confirmed txs per /address/{addr}/txs/chain page.
+private const val CHAIN_TXS_PAGE_SIZE = 25
+// Hard cap on pagination loops, protecting against pathological cases (e.g. a
+// stored cursor whose tx was orphaned by a deep reorg). 200 pages = 5,000 txs.
+private const val MAX_CHAIN_PAGES = 200
+
 /**
  * Manages wallet synchronization with the blockchain.
  */
@@ -260,52 +266,7 @@ class SyncManager(
             )
 
             try {
-                // Cheap probe: skip /txs and /utxo entirely for addresses with no history.
-                val addressInfo = currentApi.getAddress(address)
-                val totalTxCount = addressInfo.chainStats.txCount + addressInfo.mempoolStats.txCount
-                if (totalTxCount > 0) {
-                    // Get transactions
-                    val transactions = currentApi.getAddressTransactions(address)
-                    if (transactions.isNotEmpty()) {
-                        // Mark address as used
-                        publicKeyManager.markAsUsed(key.path)
-
-                        // Process transactions
-                        val processor = TransactionProcessor(
-                            publicKeyManager,
-                            transactionStorage,
-                            utxoStorage,
-                            addressConverter
-                        )
-                        val newTxs = processor.processTransactions(address, transactions, blockHeight)
-                        for (tx in newTxs) {
-                            if (tx.type == TransactionType.INCOMING) {
-                                _events.emit(WalletEvent.TransactionReceived(tx))
-                            }
-                        }
-                    }
-
-                    // Get UTXOs
-                    val utxos = currentApi.getAddressUtxos(address)
-                    val processor = TransactionProcessor(
-                        publicKeyManager,
-                        transactionStorage,
-                        utxoStorage,
-                        addressConverter
-                    )
-                    processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
-                } else if (key.isUsed) {
-                    // Previously-active address with zero current activity (deep reorg
-                    // or RBF eviction). Clean up any stale local UTXOs without an API
-                    // call: /utxo would return [], so we feed [] directly.
-                    val processor = TransactionProcessor(
-                        publicKeyManager,
-                        transactionStorage,
-                        utxoStorage,
-                        addressConverter
-                    )
-                    processor.processUtxos(address, emptyList(), key.path, key.scriptType, blockHeight)
-                }
+                syncAddress(currentApi, key, address, blockHeight)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -322,6 +283,111 @@ class SyncManager(
         // Emit balance update
         val balance = calculateBalance()
         _events.emit(WalletEvent.BalanceUpdated(balance))
+    }
+
+    /**
+     * Sync a single address using the delta-fetch algorithm:
+     *
+     * 1. Probe with /address/{addr} (1 call) to read current chain & mempool
+     *    tx counts.
+     * 2. If neither count changed since last sync, skip remaining work — the
+     *    fast path costs only the probe.
+     * 3. Otherwise: paginate /txs/chain to fetch only the new confirmed txs
+     *    (terminating on the stored cursor), refetch /txs/mempool when nonzero
+     *    (handles RBF and mempool→chain promotion), and refetch /utxo so
+     *    [TransactionProcessor.processUtxos] can prune any orphaned outputs.
+     *
+     * On a fresh wallet [WalletPublicKey.lastSyncedChainTipTxid] is null and
+     * the pagination naturally walks the full history; on the steady state of
+     * an unchanged address the cost is exactly 1 call.
+     */
+    private suspend fun syncAddress(
+        currentApi: BlockchainExplorerApi,
+        key: WalletPublicKey,
+        address: String,
+        blockHeight: Int
+    ) {
+        val addressInfo = currentApi.getAddress(address)
+        val curChain = addressInfo.chainStats.txCount
+        val curMempool = addressInfo.mempoolStats.txCount
+        val prevChain = key.lastSyncedChainTxCount
+        val prevMempool = key.lastSyncedMempoolTxCount
+        val prevTip = key.lastSyncedChainTipTxid
+
+        val chainChanged = curChain != prevChain
+        val mempoolChanged = curMempool != prevMempool
+        if (!chainChanged && !mempoolChanged) return
+
+        val processor = TransactionProcessor(
+            publicKeyManager,
+            transactionStorage,
+            utxoStorage,
+            addressConverter
+        )
+
+        val newConfirmed = mutableListOf<ApiTransaction>()
+        var newTip = prevTip
+        if (chainChanged) {
+            if (curChain == 0) {
+                // No on-chain history. Clear the cursor so a future re-activation
+                // doesn't try to paginate against an orphaned txid.
+                newTip = null
+            } else {
+                var cursor: String? = null
+                var pages = 0
+                pageLoop@ while (true) {
+                    val page = currentApi.getAddressChainTxs(address, cursor)
+                    if (pages == 0 && page.isNotEmpty()) {
+                        newTip = page.first().txid
+                    }
+                    for (tx in page) {
+                        if (prevTip != null && tx.txid == prevTip) break@pageLoop
+                        newConfirmed += tx
+                    }
+                    if (page.size < CHAIN_TXS_PAGE_SIZE) break@pageLoop
+                    pages++
+                    if (pages >= MAX_CHAIN_PAGES) break@pageLoop
+                    cursor = page.last().txid
+                }
+            }
+        }
+
+        // Mempool: always refetch when nonzero. Bounded at 50 in one call and
+        // the only reliable way to detect RBF (replacement txid differs but
+        // count may be unchanged) and "tx confirmed without net change".
+        val mempoolTxs = if (curMempool > 0) {
+            currentApi.getAddressMempoolTxs(address)
+        } else {
+            emptyList()
+        }
+
+        // UTXOs change whenever any tx involving the address moves, so refetch
+        // whenever a count changed. For zero-activity addresses we know /utxo
+        // returns []; skip the network call and let processUtxos prune locally.
+        val utxos = if (curChain + curMempool > 0) {
+            currentApi.getAddressUtxos(address)
+        } else {
+            emptyList()
+        }
+        processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
+
+        val allNewTxs = newConfirmed + mempoolTxs
+        if (allNewTxs.isNotEmpty()) {
+            publicKeyManager.markAsUsed(key.path)
+            val processedTxs = processor.processTransactions(address, allNewTxs, blockHeight)
+            for (tx in processedTxs) {
+                if (tx.type == TransactionType.INCOMING) {
+                    _events.emit(WalletEvent.TransactionReceived(tx))
+                }
+            }
+        }
+
+        publicKeyManager.recordSyncState(
+            path = key.path,
+            chainTxCount = curChain,
+            mempoolTxCount = curMempool,
+            chainTipTxid = newTip
+        )
     }
 
     private suspend fun performIncrementalSync() {
