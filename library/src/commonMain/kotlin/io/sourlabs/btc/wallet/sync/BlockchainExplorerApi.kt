@@ -103,6 +103,31 @@ class BlockchainExplorerApi private constructor(
     }
 
     /**
+     * Get a page of confirmed (chain) transactions for an address. Returns up
+     * to 25 newest-first per call; pass the txid of the last item from the
+     * previous page as [lastSeenTxid] to fetch older entries.
+     */
+    suspend fun getAddressChainTxs(
+        address: String,
+        lastSeenTxid: String? = null
+    ): List<ApiTransaction> {
+        val url = if (lastSeenTxid != null) {
+            "$baseUrl/address/$address/txs/chain/$lastSeenTxid"
+        } else {
+            "$baseUrl/address/$address/txs/chain"
+        }
+        return client.get(url).body()
+    }
+
+    /**
+     * Get all unconfirmed (mempool) transactions for an address. Returns up
+     * to 50 newest-first; no pagination cursor.
+     */
+    suspend fun getAddressMempoolTxs(address: String): List<ApiTransaction> {
+        return client.get("$baseUrl/address/$address/txs/mempool").body()
+    }
+
+    /**
      * Get UTXOs for an address.
      */
     suspend fun getAddressUtxos(address: String): List<ApiUtxo> {

@@ -48,6 +48,18 @@ interface PublicKeyStorage {
     suspend fun markAsUsed(path: String)
 
     /**
+     * Persist the per-address sync state used by the delta-fetch algorithm.
+     * @param chainTipTxid newest confirmed txid seen for this address; null
+     * means no chain history (cold start, post-eviction, or no activity).
+     */
+    suspend fun updateSyncState(
+        path: String,
+        chainTxCount: Int,
+        mempoolTxCount: Int,
+        chainTipTxid: String?
+    )
+
+    /**
      * Delete all stored keys.
      */
     suspend fun clear()
