@@ -156,6 +156,15 @@ class BlockchainExplorerApi private constructor(
     }
 
     /**
+     * Get the 10 most recent blocks, or 10 blocks starting from [startHeight].
+     * Returns full block metadata in a single call.
+     */
+    suspend fun getBlocks(startHeight: Int? = null): List<ApiBlock> {
+        val url = if (startHeight != null) "$baseUrl/blocks/$startHeight" else "$baseUrl/blocks"
+        return client.get(url).body()
+    }
+
+    /**
      * Get recommended fee rates.
      */
     suspend fun getRecommendedFees(): FeeEstimates {
@@ -283,7 +292,8 @@ data class ApiBlock(
     val mediantime: Long,
     val nonce: Long,
     val bits: Long,
-    val difficulty: Double
+    // Defaulted because GET /blocks may omit this field; only /block/{hash} reliably returns it.
+    val difficulty: Double = 0.0
 )
 
 @Serializable
