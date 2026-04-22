@@ -46,7 +46,25 @@ data class WalletPublicKey(
     /**
      * Whether this key has been used in a transaction.
      */
-    val isUsed: Boolean = false
+    val isUsed: Boolean = false,
+
+    /**
+     * Last seen confirmed (chain) tx_count for this address. Used by the sync
+     * loop to detect deltas without re-fetching the full history.
+     */
+    val lastSyncedChainTxCount: Int = 0,
+
+    /**
+     * Last seen mempool tx_count for this address.
+     */
+    val lastSyncedMempoolTxCount: Int = 0,
+
+    /**
+     * Newest confirmed txid seen at last sync. Acts as a content-addressed
+     * cursor for paginated /txs/chain delta fetches; null means no chain
+     * history has been recorded yet (cold start or post-eviction).
+     */
+    val lastSyncedChainTipTxid: String? = null
 ) {
     /**
      * The script type derived from the purpose.
@@ -68,6 +86,9 @@ data class WalletPublicKey(
         if (publicKey != other.publicKey) return false
         if (!publicKeyHash.contentEquals(other.publicKeyHash)) return false
         if (isUsed != other.isUsed) return false
+        if (lastSyncedChainTxCount != other.lastSyncedChainTxCount) return false
+        if (lastSyncedMempoolTxCount != other.lastSyncedMempoolTxCount) return false
+        if (lastSyncedChainTipTxid != other.lastSyncedChainTipTxid) return false
 
         return true
     }
@@ -81,6 +102,9 @@ data class WalletPublicKey(
         result = 31 * result + publicKey.hashCode()
         result = 31 * result + publicKeyHash.contentHashCode()
         result = 31 * result + isUsed.hashCode()
+        result = 31 * result + lastSyncedChainTxCount
+        result = 31 * result + lastSyncedMempoolTxCount
+        result = 31 * result + (lastSyncedChainTipTxid?.hashCode() ?: 0)
         return result
     }
 }
