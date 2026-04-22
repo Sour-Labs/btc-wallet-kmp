@@ -425,6 +425,16 @@ val wallet = BitcoinKit.builder(config)
 
 When sync starts, the library tries each provider in order. If the primary (BlockStream in this example) fails, it automatically falls back to MempoolSpace, then to the custom API. Fallback attempts are reported as `WalletEvent.WalletError` events so you can observe them via the `events` flow.
 
+### Sync Efficiency
+
+The library minimizes calls to the Blockchain Explorer in a few ways:
+
+- **Single-call block-tip lookup.** A full sync fetches tip metadata (height, hash, timestamp) via a single `GET /blocks` call, instead of the three round-trips (`/blocks/tip/height`, `/block-height/{h}`, `/block/{hash}`) that a naive Esplora client would make.
+- **Gap-address pruning.** Before fetching transactions and UTXOs for each address in the gap-limit pool, a cheap `GET /address/{addr}` probe checks for any on-chain or mempool activity. Addresses with zero history skip the per-address `/txs` and `/utxo` calls entirely.
+- **Cached block height.** `getCurrentBlockHeight()` returns the tip cached by the sync loop in local storage, falling back to the network only before the first sync completes.
+
+With the default gap limit of 20, a full sync of a fresh wallet drops from ~83 calls to ~41 (a single block-tip call plus one probe per address). Wallets with a few active addresses see proportional reductions.
+
 ## Wallet Scanning
 
 Scan for existing wallet activity before creating a wallet:
