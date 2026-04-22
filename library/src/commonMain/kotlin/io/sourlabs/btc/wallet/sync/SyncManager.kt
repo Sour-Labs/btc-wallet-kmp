@@ -293,6 +293,17 @@ class SyncManager(
                         addressConverter
                     )
                     processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
+                } else if (key.isUsed) {
+                    // Previously-active address with zero current activity (deep reorg
+                    // or RBF eviction). Clean up any stale local UTXOs without an API
+                    // call: /utxo would return [], so we feed [] directly.
+                    val processor = TransactionProcessor(
+                        publicKeyManager,
+                        transactionStorage,
+                        utxoStorage,
+                        addressConverter
+                    )
+                    processor.processUtxos(address, emptyList(), key.path, key.scriptType, blockHeight)
                 }
             } catch (e: CancellationException) {
                 throw e
