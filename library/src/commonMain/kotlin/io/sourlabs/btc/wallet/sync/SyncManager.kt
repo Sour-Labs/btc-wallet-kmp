@@ -316,7 +316,15 @@ class SyncManager(
 
         val chainChanged = curChain != prevChain
         val mempoolChanged = curMempool != prevMempool
-        if (!chainChanged && !mempoolChanged) return
+        // Fast path: skip the rest only when (1) counts match the last sync,
+        // (2) mempool is empty — otherwise we must refetch /txs/mempool to
+        // catch RBF replacements that swap one txid for another at the same
+        // count, and (3) we've recorded sync state at least once. A used key
+        // with no recorded cursor (prevTip == null) may carry stale local
+        // UTXOs from a Phase 1 sync or a prior reorg-to-zero; force one
+        // local-only reconciliation pass to prune them.
+        val needsReconciliation = key.isUsed && prevTip == null
+        if (!chainChanged && !mempoolChanged && curMempool == 0 && !needsReconciliation) return
 
         val processor = TransactionProcessor(
             publicKeyManager,
