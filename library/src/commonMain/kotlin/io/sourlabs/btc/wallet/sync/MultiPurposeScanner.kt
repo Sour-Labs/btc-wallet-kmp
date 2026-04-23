@@ -1,5 +1,6 @@
 package io.sourlabs.btc.wallet.sync
 
+import co.touchlab.kermit.Logger
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.models.Network
@@ -7,6 +8,8 @@ import io.sourlabs.btc.wallet.models.Purpose
 import io.sourlabs.btc.wallet.models.ScriptType
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+
+private val log = Logger.withTag("MultiPurposeScanner")
 
 /**
  * Result of scanning a single purpose/address type.
@@ -88,6 +91,7 @@ class MultiPurposeScanner(
      */
     suspend fun scanAll(): WalletScanResult {
         val purposes = Purpose.allPurposes
+        log.i { "scanAll: scanning ${purposes.size} purposes on $network (gapLimit=$gapLimit)" }
         val results = mutableListOf<PurposeScanResult>()
 
         for (purpose in purposes) {
@@ -102,6 +106,7 @@ class MultiPurposeScanner(
             ?.purpose
             ?: Purpose.BIP84 // Default to native SegWit if no activity
 
+        log.i { "scanAll: done. totalBalance=$totalBalance sat, recommended=$recommendedPurpose" }
         return WalletScanResult(
             results = results,
             totalBalance = totalBalance,
@@ -116,6 +121,7 @@ class MultiPurposeScanner(
         purpose: Purpose,
         onProgress: suspend (chain: String, index: Int) -> Unit = { _, _ -> }
     ): PurposeScanResult {
+        log.i { "scanPurpose($purpose) — starting" }
         val hdWallet = HDWalletManager.fromSeed(seed, purpose, network, account = 0)
         val addressConverter = AddressConverter(network)
         val scriptType = ScriptType.fromPurpose(purpose)
@@ -187,6 +193,10 @@ class MultiPurposeScanner(
             index++
         }
 
+        log.i {
+            "scanPurpose($purpose) — done: externalUsed=$externalUsed, internalUsed=$internalUsed, " +
+                "txCount=$txCount, balance=$totalBalance sat"
+        }
         return PurposeScanResult(
             purpose = purpose,
             externalAddressesUsed = externalUsed,

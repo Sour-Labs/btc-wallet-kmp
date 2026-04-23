@@ -1,5 +1,6 @@
 package io.sourlabs.btc.wallet.sync
 
+import co.touchlab.kermit.Logger
 import io.sourlabs.btc.wallet.core.SyncConfig
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
@@ -16,6 +17,8 @@ private const val CHAIN_TXS_PAGE_SIZE = 25
 // Hard cap on pagination loops, protecting against pathological cases (e.g. a
 // stored cursor whose tx was orphaned by a deep reorg). 200 pages = 5,000 txs.
 private const val MAX_CHAIN_PAGES = 200
+
+private val log = Logger.withTag("SyncManager")
 
 /**
  * Manages wallet synchronization with the blockchain.
@@ -81,13 +84,18 @@ class SyncManager(
      * order until one succeeds. If all fail, reports the last error.
      */
     suspend fun start(scope: CoroutineScope, mode: SyncMode = SyncMode.Continuous) {
-        if (syncJob?.isActive == true) return
+        if (syncJob?.isActive == true) {
+            log.d { "start(mode=$mode): already active, skipping" }
+            return
+        }
+        log.i { "start(mode=$mode)" }
 
         syncJob = scope.launch {
             when (mode) {
                 SyncMode.OneShot, SyncMode.Continuous -> {
                     val lastError = tryStartWithFallbacks()
                     if (lastError != null) {
+                        log.e(lastError) { "Sync failed across all configured sync configs" }
                         _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
                         _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
                         _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
@@ -95,11 +103,13 @@ class SyncManager(
                     if (mode == SyncMode.OneShot) {
                         // No polling follows, so release the HTTP client eagerly instead of
                         // holding it open until the caller remembers to call stop().
+                        log.d { "OneShot complete, releasing HTTP client" }
                         api?.close()
                         api = null
                         return@launch
                     }
                     if (lastError != null) return@launch
+                    log.i { "Entering poll loop (intervalMs=$pollingInterval)" }
                     pollLoop()
                 }
                 SyncMode.IncrementalOnly -> {
@@ -107,6 +117,7 @@ class SyncManager(
                     // against the current activeSyncConfig (which may be a fallback
                     // established by a previous Continuous/OneShot sync) without doing
                     // a full scan, mark the kit Synced immediately, then start polling.
+                    log.i { "IncrementalOnly: skipping full sync, marking Synced and polling" }
                     api?.close()
                     api = buildApi()
 
@@ -135,12 +146,15 @@ class SyncManager(
         val warnings = mutableListOf<SyncState.Warning>()
 
         for ((index, config) in syncConfigs.withIndex()) {
+            val configName = config::class.simpleName ?: "Unknown"
+            log.i { "Trying sync config ${index + 1}/${syncConfigs.size}: $configName" }
             activeSyncConfig = config
             api?.close()
             api = buildApi()
 
             try {
                 performFullSync(warnings)
+                log.i { "Sync succeeded with $configName" }
                 return null // success
             } catch (e: CancellationException) {
                 throw e
@@ -149,18 +163,21 @@ class SyncManager(
                 val hasMoreFallbacks = index < syncConfigs.size - 1
                 warnings.add(
                     SyncState.Warning(
-                        configName = config::class.simpleName ?: "Unknown",
+                        configName = configName,
                         message = e.message ?: "Sync failed",
                         cause = e
                     )
                 )
                 if (hasMoreFallbacks) {
+                    log.w(e) { "Sync failed with $configName, trying fallback" }
                     _events.emit(
                         WalletEvent.WalletError(
-                            "Sync failed with ${config::class.simpleName}: ${e.message}, trying fallback...",
+                            "Sync failed with $configName: ${e.message}, trying fallback...",
                             e
                         )
                     )
+                } else {
+                    log.w(e) { "Sync failed with $configName (no more fallbacks)" }
                 }
             }
         }
@@ -172,6 +189,7 @@ class SyncManager(
      * Stop synchronization.
      */
     fun stop() {
+        log.i { "stop()" }
         syncJob?.cancel()
         syncJob = null
         api?.close()
@@ -182,11 +200,13 @@ class SyncManager(
      * Trigger a manual refresh.
      */
     suspend fun refresh() {
+        log.i { "refresh() — forcing full sync" }
         try {
             performFullSync()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            log.e(e) { "refresh() failed" }
             _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
             _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
         }
@@ -197,8 +217,11 @@ class SyncManager(
      */
     suspend fun getRecommendedFees(): FeeEstimates? {
         return try {
-            api?.getRecommendedFees()
-        } catch (_: Exception) {
+            val fees = api?.getRecommendedFees()
+            log.d { "getRecommendedFees: $fees" }
+            fees
+        } catch (e: Exception) {
+            log.w(e) { "getRecommendedFees failed" }
             null
         }
     }
@@ -209,10 +232,17 @@ class SyncManager(
      */
     suspend fun broadcastTransaction(rawTxHex: String): Result<String> {
         return try {
-            val txId = api?.broadcastTransaction(rawTxHex)
-                ?: return Result.failure(Exception("API not initialized"))
+            val currentApi = api
+            if (currentApi == null) {
+                log.w { "broadcastTransaction: API not initialized" }
+                return Result.failure(Exception("API not initialized"))
+            }
+            log.i { "Broadcasting transaction (${rawTxHex.length / 2} bytes)" }
+            val txId = currentApi.broadcastTransaction(rawTxHex)
+            log.i { "Broadcast succeeded: txId=$txId" }
             Result.success(txId)
         } catch (e: Exception) {
+            log.e(e) { "Broadcast failed" }
             Result.failure(e)
         }
     }
@@ -221,10 +251,16 @@ class SyncManager(
      * Get current block height.
      */
     suspend fun getCurrentBlockHeight(): Int? {
-        blockInfoStorage.getLastBlockInfo()?.height?.let { return it }
+        blockInfoStorage.getLastBlockInfo()?.height?.let {
+            log.d { "getCurrentBlockHeight: cached=$it" }
+            return it
+        }
         return try {
-            api?.getBlockHeight()
-        } catch (_: Exception) {
+            val height = api?.getBlockHeight()
+            log.d { "getCurrentBlockHeight: fetched=$height" }
+            height
+        } catch (e: Exception) {
+            log.w(e) { "getCurrentBlockHeight failed" }
             null
         }
     }
@@ -232,6 +268,8 @@ class SyncManager(
     private suspend fun performFullSync(warnings: List<SyncState.Warning> = emptyList()) {
         val currentApi = api ?: throw IllegalStateException("API not initialized")
 
+        val startMs = Clock.System.now().toEpochMilliseconds()
+        log.i { "Full sync: starting" }
         _syncState.value = SyncState.Syncing(0.0, "Starting sync...")
         _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
 
@@ -240,6 +278,7 @@ class SyncManager(
         val tip = currentApi.getBlocks().firstOrNull()
             ?: error("Esplora /blocks returned an empty response; backend may be misconfigured")
         val blockHeight = tip.height
+        log.i { "Full sync: chain tip height=${tip.height} hash=${tip.id}" }
         val blockInfo = BlockInfo(
             height = tip.height,
             hash = tip.id,
@@ -254,7 +293,9 @@ class SyncManager(
         val allKeys = externalKeys + internalKeys
 
         val totalAddresses = allKeys.size
+        log.i { "Full sync: syncing $totalAddresses addresses (${externalKeys.size} external + ${internalKeys.size} internal)" }
         var processed = 0
+        var errors = 0
 
         // Sync each address
         for (key in allKeys) {
@@ -270,7 +311,8 @@ class SyncManager(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                // Continue with other addresses on error
+                errors++
+                log.w(e) { "Address sync failed for $address (${key.path}); continuing" }
             }
 
             processed++
@@ -283,6 +325,10 @@ class SyncManager(
         // Emit balance update
         val balance = calculateBalance()
         _events.emit(WalletEvent.BalanceUpdated(balance))
+        log.i {
+            "Full sync: completed in ${syncTime - startMs}ms " +
+                "(errors=$errors, balance=${balance.spendable} spendable / ${balance.unconfirmed} unconfirmed sat)"
+        }
     }
 
     /**
@@ -325,7 +371,14 @@ class SyncManager(
         // the condition self-clears once reconciliation has run.
         val hasStaleUtxos = key.isUsed && prevTip == null &&
             utxoStorage.getUtxosForKey(key.path).isNotEmpty()
-        if (!chainChanged && !mempoolChanged && curMempool == 0 && !hasStaleUtxos) return
+        if (!chainChanged && !mempoolChanged && curMempool == 0 && !hasStaleUtxos) {
+            log.d { "syncAddress $address: unchanged (chain=$curChain, mempool=$curMempool), fast path" }
+            return
+        }
+        log.d {
+            "syncAddress $address: chainChanged=$chainChanged (${prevChain}→${curChain}), " +
+                "mempoolChanged=$mempoolChanged (${prevMempool}→${curMempool}), hasStaleUtxos=$hasStaleUtxos"
+        }
 
         val processor = TransactionProcessor(
             publicKeyManager,
@@ -382,10 +435,15 @@ class SyncManager(
 
         val allNewTxs = newConfirmed + mempoolTxs
         if (allNewTxs.isNotEmpty()) {
+            log.d {
+                "syncAddress $address: processing ${allNewTxs.size} txs " +
+                    "(${newConfirmed.size} confirmed + ${mempoolTxs.size} mempool)"
+            }
             publicKeyManager.markAsUsed(key.path)
             val processedTxs = processor.processTransactions(address, allNewTxs, blockHeight)
             for (tx in processedTxs) {
                 if (tx.type == TransactionType.INCOMING) {
+                    log.i { "Incoming tx: txId=${tx.txId} amount=${tx.amount} sat at $address" }
                     _events.emit(WalletEvent.TransactionReceived(tx))
                 }
             }
@@ -408,14 +466,20 @@ class SyncManager(
             val lastBlock = blockInfoStorage.getLastBlockInfo()
 
             if (lastBlock == null || currentHeight > lastBlock.height) {
+                log.i {
+                    "Incremental sync: new block detected " +
+                        "(${lastBlock?.height ?: "none"}→$currentHeight), running full sync"
+                }
                 // New block detected, do full sync
                 performFullSync()
             } else {
+                log.d { "Incremental sync: no new blocks (height=$currentHeight), checking unconfirmed txs" }
                 // Just check unconfirmed transactions
                 checkUnconfirmedTransactions()
 
                 // Restore synced state if we recovered from a transient error
                 if (_syncState.value is SyncState.Error) {
+                    log.i { "Incremental sync: recovered from prior error, state → Synced" }
                     val syncTime = Clock.System.now().toEpochMilliseconds()
                     _syncState.value = SyncState.Synced(syncTime)
                     _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
@@ -424,6 +488,7 @@ class SyncManager(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            log.w(e) { "Incremental sync failed" }
             _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
             _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
             _events.emit(WalletEvent.WalletError(e.message ?: "Sync failed", e))
@@ -432,12 +497,15 @@ class SyncManager(
 
     private suspend fun checkUnconfirmedTransactions() {
         val unconfirmed = transactionStorage.getUnconfirmedTransactions()
+        if (unconfirmed.isEmpty()) return
+        log.d { "Checking ${unconfirmed.size} unconfirmed tx(s) for confirmation" }
 
         for (tx in unconfirmed) {
             try {
                 val apiTx = api?.getTransaction(tx.txId) ?: continue
 
                 if (apiTx.status.confirmed && apiTx.status.blockHeight != null) {
+                    log.i { "Tx confirmed: txId=${tx.txId} at height=${apiTx.status.blockHeight}" }
                     transactionStorage.updateConfirmation(
                         tx.txId,
                         apiTx.status.blockHeight,
@@ -452,8 +520,8 @@ class SyncManager(
                         )
                     )
                 }
-            } catch (_: Exception) {
-                // Continue checking other transactions
+            } catch (e: Exception) {
+                log.w(e) { "Failed to check status for txId=${tx.txId}; continuing" }
             }
         }
     }
