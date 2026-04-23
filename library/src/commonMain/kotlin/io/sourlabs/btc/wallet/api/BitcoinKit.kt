@@ -1,5 +1,6 @@
 package io.sourlabs.btc.wallet.api
 
+import co.touchlab.kermit.Logger
 import io.sourlabs.btc.wallet.core.SyncConfig
 import io.sourlabs.btc.wallet.core.WalletConfig
 import io.sourlabs.btc.wallet.keys.AddressConverter
@@ -23,6 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+
+private val log = Logger.withTag("BitcoinKit")
 
 /**
  * Main facade for the Bitcoin wallet library.
@@ -73,6 +76,7 @@ class BitcoinKit private constructor(
      * source compatibility with earlier versions.
      */
     suspend fun start(mode: SyncMode = SyncMode.Continuous) {
+        log.i { "start(mode=$mode, network=$network, purpose=$purpose, watchOnly=$isWatchOnly)" }
         publicKeyManager.initialize()
         syncManager.start(scope, mode)
     }
@@ -81,6 +85,7 @@ class BitcoinKit private constructor(
      * Stop the wallet (stop syncing).
      */
     fun stop() {
+        log.i { "stop()" }
         syncManager.stop()
     }
 
@@ -88,6 +93,7 @@ class BitcoinKit private constructor(
      * Trigger a manual refresh/sync.
      */
     suspend fun refresh() {
+        log.i { "refresh()" }
         syncManager.refresh()
     }
 
@@ -209,6 +215,10 @@ class BitcoinKit private constructor(
         rbfEnabled: Boolean = true,
         subtractFeeFromAmount: Boolean = false
     ): Result<String> {
+        log.i {
+            "send(amount=$amount sat, feeRate=$feeRate sat/vB, strategy=$strategy, " +
+                "rbf=$rbfEnabled, subtractFee=$subtractFeeFromAmount)"
+        }
         val createdTx = createTransaction(
             toAddress = toAddress,
             amount = amount,
@@ -286,6 +296,7 @@ class BitcoinKit private constructor(
      * Clear all wallet data.
      */
     suspend fun clearData() {
+        log.i { "clearData()" }
         stop()
         storage.clearAll()
     }
@@ -398,6 +409,7 @@ class BitcoinKit private constructor(
             apiBaseUrl: String? = null,
             blockStreamConfig: SyncConfig.BlockStream? = null
         ): WalletScanResult {
+            log.i { "scanWallet(network=$network) started" }
             val seed = fr.acinq.bitcoin.MnemonicCode.toSeed(mnemonic, passphrase)
             val api = when {
                 blockStreamConfig != null -> BlockchainExplorerApi(blockStreamConfig)
@@ -407,7 +419,12 @@ class BitcoinKit private constructor(
 
             return try {
                 val scanner = MultiPurposeScanner(seed, network, api)
-                scanner.scanAll()
+                val result = scanner.scanAll()
+                log.i {
+                    "scanWallet completed: totalBalance=${result.totalBalance} sat, " +
+                        "activePurposes=${result.activePurposes}, recommended=${result.recommendedPurpose}"
+                }
+                result
             } finally {
                 api.close()
             }

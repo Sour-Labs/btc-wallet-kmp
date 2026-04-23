@@ -1,5 +1,6 @@
 package io.sourlabs.btc.wallet.sync
 
+import co.touchlab.kermit.Logger
 import io.ktor.client.*
 import io.ktor.client.call.*
 import io.ktor.client.plugins.*
@@ -15,6 +16,8 @@ import io.sourlabs.btc.wallet.core.SyncConfig
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+
+private val log = Logger.withTag("BlockchainExplorerApi")
 
 /**
  * API client for blockchain data.
@@ -73,6 +76,7 @@ class BlockchainExplorerApi private constructor(
     }
 
     private suspend fun fetchToken(auth: SyncConfig.BlockStream.Auth): BearerTokens {
+        log.i { "Fetching OAuth access token from ${auth.tokenUrl}" }
         val response: TokenResponse = tokenClient!!.submitForm(
             url = auth.tokenUrl,
             formParameters = Parameters.build {
@@ -85,6 +89,7 @@ class BlockchainExplorerApi private constructor(
         // Enterprise tokens have no refresh token (refresh_expires_in = 0); re-running
         // client_credentials in refreshTokens{} is how we renew. BearerTokens requires a
         // non-null refresh value, so pass the access token itself — it's never actually used.
+        log.d { "OAuth token fetched (expiresIn=${response.expiresIn}s)" }
         return BearerTokens(response.accessToken, response.accessToken)
     }
 
@@ -92,6 +97,7 @@ class BlockchainExplorerApi private constructor(
      * Get address information including transaction history.
      */
     suspend fun getAddress(address: String): AddressResponse {
+        log.d { "GET /address/$address" }
         return client.get("$baseUrl/address/$address").body()
     }
 
@@ -99,6 +105,7 @@ class BlockchainExplorerApi private constructor(
      * Get transactions for an address.
      */
     suspend fun getAddressTransactions(address: String): List<ApiTransaction> {
+        log.d { "GET /address/$address/txs" }
         return client.get("$baseUrl/address/$address/txs").body()
     }
 
@@ -116,6 +123,7 @@ class BlockchainExplorerApi private constructor(
         } else {
             "$baseUrl/address/$address/txs/chain"
         }
+        log.d { "GET /address/$address/txs/chain${if (lastSeenTxid != null) " (after=$lastSeenTxid)" else ""}" }
         return client.get(url).body()
     }
 
@@ -124,6 +132,7 @@ class BlockchainExplorerApi private constructor(
      * to 50 newest-first; no pagination cursor.
      */
     suspend fun getAddressMempoolTxs(address: String): List<ApiTransaction> {
+        log.d { "GET /address/$address/txs/mempool" }
         return client.get("$baseUrl/address/$address/txs/mempool").body()
     }
 
@@ -131,6 +140,7 @@ class BlockchainExplorerApi private constructor(
      * Get UTXOs for an address.
      */
     suspend fun getAddressUtxos(address: String): List<ApiUtxo> {
+        log.d { "GET /address/$address/utxo" }
         return client.get("$baseUrl/address/$address/utxo").body()
     }
 
@@ -138,6 +148,7 @@ class BlockchainExplorerApi private constructor(
      * Get a transaction by its ID.
      */
     suspend fun getTransaction(txId: String): ApiTransaction {
+        log.d { "GET /tx/$txId" }
         return client.get("$baseUrl/tx/$txId").body()
     }
 
@@ -145,6 +156,7 @@ class BlockchainExplorerApi private constructor(
      * Get raw transaction hex.
      */
     suspend fun getRawTransaction(txId: String): String {
+        log.d { "GET /tx/$txId/hex" }
         return client.get("$baseUrl/tx/$txId/hex").bodyAsText()
     }
 
@@ -153,6 +165,7 @@ class BlockchainExplorerApi private constructor(
      * @return transaction ID if successful
      */
     suspend fun broadcastTransaction(rawTxHex: String): String {
+        log.d { "POST /tx (${rawTxHex.length / 2} bytes)" }
         val response = client.post("$baseUrl/tx") {
             setBody(rawTxHex)
         }
@@ -163,6 +176,7 @@ class BlockchainExplorerApi private constructor(
      * Get current block height.
      */
     suspend fun getBlockHeight(): Int {
+        log.d { "GET /blocks/tip/height" }
         return client.get("$baseUrl/blocks/tip/height").bodyAsText().toInt()
     }
 
@@ -170,6 +184,7 @@ class BlockchainExplorerApi private constructor(
      * Get block hash at height.
      */
     suspend fun getBlockHash(height: Int): String {
+        log.d { "GET /block-height/$height" }
         return client.get("$baseUrl/block-height/$height").bodyAsText()
     }
 
@@ -177,6 +192,7 @@ class BlockchainExplorerApi private constructor(
      * Get block information.
      */
     suspend fun getBlock(hash: String): ApiBlock {
+        log.d { "GET /block/$hash" }
         return client.get("$baseUrl/block/$hash").body()
     }
 
@@ -186,6 +202,7 @@ class BlockchainExplorerApi private constructor(
      */
     suspend fun getBlocks(startHeight: Int? = null): List<ApiBlock> {
         val url = if (startHeight != null) "$baseUrl/blocks/$startHeight" else "$baseUrl/blocks"
+        log.d { "GET /blocks${if (startHeight != null) "/$startHeight" else ""}" }
         return client.get(url).body()
     }
 
@@ -193,6 +210,7 @@ class BlockchainExplorerApi private constructor(
      * Get recommended fee rates.
      */
     suspend fun getRecommendedFees(): FeeEstimates {
+        log.d { "GET /v1/fees/recommended" }
         return client.get("$baseUrl/v1/fees/recommended").body()
     }
 
@@ -200,6 +218,7 @@ class BlockchainExplorerApi private constructor(
      * Get mempool statistics.
      */
     suspend fun getMempoolInfo(): MempoolInfo {
+        log.d { "GET /mempool" }
         return client.get("$baseUrl/mempool").body()
     }
 
