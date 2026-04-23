@@ -39,6 +39,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             api(libs.acinq.bitcoin.kmp)
+            api(libs.touchlab.kermit)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.ktor.client.core)
