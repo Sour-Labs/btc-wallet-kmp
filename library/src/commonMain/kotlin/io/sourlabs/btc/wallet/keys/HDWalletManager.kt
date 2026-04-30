@@ -6,6 +6,7 @@ import fr.acinq.bitcoin.DeterministicWallet.ExtendedPrivateKey
 import fr.acinq.bitcoin.DeterministicWallet.ExtendedPublicKey
 import fr.acinq.bitcoin.PublicKey
 import io.sourlabs.btc.wallet.core.WalletConfig
+import io.sourlabs.btc.wallet.descriptors.Descriptor
 import io.sourlabs.btc.wallet.keys.SeedManager.toSeed
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
@@ -105,6 +106,7 @@ class HDWalletManager private constructor(
                     network = config.network,
                     account = config.account
                 )
+                is WalletConfig.WatchOnlyDescriptor -> fromDescriptor(config.parsedDescriptor)
             }
         }
 
@@ -193,5 +195,27 @@ class HDWalletManager private constructor(
                 account = account
             )
         }
+
+        /**
+         * Create a watch-only wallet from a parsed BIP-380 output descriptor.
+         * The descriptor's wrapper picks the BIP purpose, the embedded extended
+         * key picks the network, and the key origin (if present) picks the
+         * account index.
+         */
+        fun fromDescriptor(descriptor: Descriptor): HDWalletManager =
+            fromExtendedPublicKey(
+                extendedPublicKey = descriptor.extendedPublicKey,
+                purpose = descriptor.purpose,
+                network = descriptor.network,
+                account = descriptor.account,
+            )
+
+        /**
+         * Convenience: parse a descriptor string and build the corresponding
+         * watch-only wallet manager. Throws [io.sourlabs.btc.wallet.api.DescriptorException]
+         * if the descriptor is invalid or unsupported.
+         */
+        fun fromDescriptor(descriptor: String): HDWalletManager =
+            fromDescriptor(Descriptor.parse(descriptor))
     }
 }
