@@ -128,8 +128,39 @@ sealed class WalletConfig {
     }
 
     /**
+     * Create a watch-only wallet from a BIP-380 output descriptor, e.g.
+     * `wpkh(...)` wrapping an account-level extended public key with a
+     * `#xxxxxxxx` checksum. Both [purpose] and [network] are dictated by the
+     * descriptor itself — the wrapper picks the BIP, and the embedded extended
+     * key's SLIP-132 prefix picks the network. [account] is taken from the
+     * third path step of the key origin if present, else 0.
+     *
+     * See [io.sourlabs.btc.wallet.descriptors.Descriptor] for the supported
+     * subset.
+     */
+    data class WatchOnlyDescriptor(
+        val descriptor: String,
+        override val gapLimit: Int = 20,
+        override val confirmationsThreshold: Int = 1,
+    ) : WalletConfig() {
+        private val parsed: io.sourlabs.btc.wallet.descriptors.Descriptor =
+            io.sourlabs.btc.wallet.descriptors.Descriptor.parse(descriptor)
+
+        override val purpose: Purpose = parsed.purpose
+        override val network: Network = parsed.network
+        override val account: Int = parsed.account
+
+        /** The parsed descriptor — exposed for downstream consumers. */
+        val parsedDescriptor: io.sourlabs.btc.wallet.descriptors.Descriptor get() = parsed
+
+        init {
+            require(gapLimit > 0) { "Gap limit must be positive" }
+        }
+    }
+
+    /**
      * Whether this configuration is for a watch-only wallet.
      */
     val isWatchOnly: Boolean
-        get() = this is WatchOnly
+        get() = this is WatchOnly || this is WatchOnlyDescriptor
 }
