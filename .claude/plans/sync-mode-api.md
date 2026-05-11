@@ -2,7 +2,7 @@
 
 **Goal:** Expose a `SyncMode` parameter on `BitcoinKit.start()` so callers can pick one-shot, continuous, or incremental-only sync behavior.
 
-**Motivation:** The `bad-wallet-client` app wants to (a) refresh balances for all wallets at launch without keeping polling loops alive for each, and (b) skip the initial full sync when switching to a wallet whose cached data is fresh (< 5 min old), while still getting incremental polling.
+**Motivation:** Wallet apps consuming the library need finer control over sync lifetime — e.g. (a) refreshing balances for many wallets at launch without keeping polling loops alive for each, and (b) skipping the initial full sync when switching to a wallet whose cached data is still fresh, while keeping incremental polling on top.
 
 ## 1. Add `SyncMode` sealed interface
 
@@ -67,7 +67,7 @@ Check if fake/stub infra already exists — if not, may need minimal test scaffo
 - Bump version in `gradle.properties` (e.g., `0.1.2` → `0.2.0` — new public API, minor bump under 0.x).
 - `./gradlew allTests` → pass.
 - `./gradlew publishToMavenLocal`.
-- Update `bad-wallet-client/gradle/libs.versions.toml` `sourlabs-bitcoin-kmp` version for Plan B consumption.
+- Coordinate the version bump with downstream consumers as a follow-up.
 
 ## Preconditions
-`IncrementalOnly` assumes local storage has prior UTXO/tx/key data. With `bad-wallet-client`'s persistent `RoomWalletStorage` (see that repo's `persistent-wallet-storage.md`), this is the `WalletSyncCoordinator`'s contract to uphold: only pick `IncrementalOnly` when `lastSyncTime` is non-null (i.e. a previous `Continuous` sync populated storage). Document the precondition in kdoc; no runtime protection in the lib.
+`IncrementalOnly` assumes local storage has prior UTXO/tx/key data — the caller is responsible for picking it only when a previous `Continuous` sync has populated that storage (e.g. `lastSyncTime` is non-null). Document the precondition in kdoc; no runtime protection in the lib.
