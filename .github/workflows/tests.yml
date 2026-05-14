@@ -3,6 +3,10 @@ name: Tests
 on:
   pull_request:
     branches: [ main ]
+  # Also run on main itself so post-merge breakage shows up as a red
+  # commit status rather than silently lurking until the next PR.
+  push:
+    branches: [ main ]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

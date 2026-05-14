@@ -522,7 +522,7 @@ BitcoinKit.scanWallet(mnemonic, ...)         // Scan for existing activity
 | Library | Version | Purpose |
 |---------|---------|---------|
 | [bitcoin-kmp](https://github.com/ACINQ/bitcoin-kmp) | 0.29.0 | Core Bitcoin implementation |
-| [secp256k1-kmp](https://github.com/ACI NQ/secp256k1-kmp) | 0.18.0 | Elliptic curve cryptography |
+| [secp256k1-kmp](https://github.com/ACINQ/secp256k1-kmp) | 0.18.0 | Elliptic curve cryptography |
 | [Ktor](https://ktor.io) | 3.0.0 | HTTP networking |
 | [kotlinx-coroutines](https://github.com/Kotlin/kotlinx.coroutines) | 1.9.0 | Async/await and Flows |
 | [kotlinx-serialization](https://github.com/Kotlin/kotlinx.serialization) | 1.7.0 | JSON serialization |
