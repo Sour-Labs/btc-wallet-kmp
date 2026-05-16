@@ -548,6 +548,16 @@ Current versions are tracked in [`gradle/libs.versions.toml`](gradle/libs.versio
 ./gradlew publishToMavenLocal
 ```
 
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup,
+the PR workflow, and code conventions.
+
+## Security
+
+To report a vulnerability, please follow the process in [SECURITY.md](SECURITY.md).
+Do not open a public issue for security-sensitive bugs.
+
 ## License
 
 ```
