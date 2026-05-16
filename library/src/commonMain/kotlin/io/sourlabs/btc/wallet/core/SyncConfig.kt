@@ -26,13 +26,19 @@ sealed class SyncConfig {
 
             /**
              * Create a MempoolSpace config for the given network.
+             *
+             * REGTEST has no public endpoint — pass the regtest baseUrl explicitly
+             * via the constructor instead.
              */
             fun forNetwork(network: io.sourlabs.btc.wallet.models.Network): MempoolSpace {
                 val url = when (network) {
                     io.sourlabs.btc.wallet.models.Network.MAINNET -> DEFAULT_MAINNET_URL
                     io.sourlabs.btc.wallet.models.Network.TESTNET -> DEFAULT_TESTNET_URL
                     io.sourlabs.btc.wallet.models.Network.SIGNET -> DEFAULT_SIGNET_URL
-                    io.sourlabs.btc.wallet.models.Network.REGTEST -> DEFAULT_MAINNET_URL // User should override
+                    io.sourlabs.btc.wallet.models.Network.REGTEST -> throw IllegalArgumentException(
+                        "REGTEST has no public Mempool.space endpoint; " +
+                            "construct SyncConfig.MempoolSpace(baseUrl = ...) explicitly"
+                    )
                 }
                 return MempoolSpace(baseUrl = url)
             }
@@ -89,13 +95,19 @@ sealed class SyncConfig {
 
             /**
              * Create a BlockStream config for the given network.
+             *
+             * REGTEST has no public endpoint — pass the regtest baseUrl explicitly
+             * via the constructor instead.
              */
             fun forNetwork(network: io.sourlabs.btc.wallet.models.Network): BlockStream {
                 val url = when (network) {
                     io.sourlabs.btc.wallet.models.Network.MAINNET -> DEFAULT_MAINNET_URL
                     io.sourlabs.btc.wallet.models.Network.TESTNET -> DEFAULT_TESTNET_URL
                     io.sourlabs.btc.wallet.models.Network.SIGNET -> DEFAULT_SIGNET_URL
-                    io.sourlabs.btc.wallet.models.Network.REGTEST -> DEFAULT_MAINNET_URL // User should override
+                    io.sourlabs.btc.wallet.models.Network.REGTEST -> throw IllegalArgumentException(
+                        "REGTEST has no public Blockstream endpoint; " +
+                            "construct SyncConfig.BlockStream(baseUrl = ...) explicitly"
+                    )
                 }
                 return BlockStream(baseUrl = url)
             }
@@ -103,7 +115,8 @@ sealed class SyncConfig {
             /**
              * Create a BlockStream config that hits the authenticated Enterprise tier using
              * OAuth2 client_credentials. Enterprise only serves mainnet and testnet — SIGNET
-             * and REGTEST fall back to the free public endpoints with no auth.
+             * falls back to the free public endpoint with no auth, and REGTEST has no public
+             * endpoint at all (construct SyncConfig.BlockStream(baseUrl = ...) explicitly).
              */
             fun enterprise(
                 network: io.sourlabs.btc.wallet.models.Network,
@@ -120,39 +133,10 @@ sealed class SyncConfig {
                     auth = Auth(clientId, clientSecret, tokenUrl)
                 )
                 io.sourlabs.btc.wallet.models.Network.SIGNET -> BlockStream(baseUrl = DEFAULT_SIGNET_URL)
-                io.sourlabs.btc.wallet.models.Network.REGTEST -> BlockStream(baseUrl = DEFAULT_MAINNET_URL)
-            }
-        }
-    }
-
-    data class MyUmbrel(
-        /**
-         * Base URL for my Umbrel blockchain explorer.
-         * Default: "http://umbrel.tail5605a5.ts.net:3006/api" for mainnet
-         */
-        val baseUrl: String = DEFAULT_MAINNET_URL,
-
-        /**
-         * Polling interval in milliseconds for checking updates.
-         */
-        val pollingIntervalMs: Long = 30_000L
-    ) : SyncConfig() {
-        companion object {
-            const val DEFAULT_MAINNET_URL = "http://umbrel.tail5605a5.ts.net:3006/api"
-            const val DEFAULT_TESTNET_URL = "http://umbrel.tail5605a5.ts.net:3006/testnet/api"
-            const val DEFAULT_SIGNET_URL = "http://umbrel.tail5605a5.ts.net:3006/signet/api"
-
-            /**
-             * Create a MyUmbrel config for the given network.
-             */
-            fun forNetwork(network: io.sourlabs.btc.wallet.models.Network): MyUmbrel {
-                val url = when (network) {
-                    io.sourlabs.btc.wallet.models.Network.MAINNET -> DEFAULT_MAINNET_URL
-                    io.sourlabs.btc.wallet.models.Network.TESTNET -> DEFAULT_TESTNET_URL
-                    io.sourlabs.btc.wallet.models.Network.SIGNET -> DEFAULT_SIGNET_URL
-                    io.sourlabs.btc.wallet.models.Network.REGTEST -> DEFAULT_MAINNET_URL // User should override
-                }
-                return MyUmbrel(baseUrl = url)
+                io.sourlabs.btc.wallet.models.Network.REGTEST -> throw IllegalArgumentException(
+                    "REGTEST has no public Blockstream endpoint; " +
+                        "construct SyncConfig.BlockStream(baseUrl = ...) explicitly"
+                )
             }
         }
     }

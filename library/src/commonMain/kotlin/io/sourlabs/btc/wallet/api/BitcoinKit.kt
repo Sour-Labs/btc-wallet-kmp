@@ -310,7 +310,12 @@ class BitcoinKit private constructor(
      * Builder for creating BitcoinKit instances.
      */
     class Builder(private val walletConfig: WalletConfig) {
-        private var syncConfig: SyncConfig = SyncConfig.BlockStream.forNetwork(walletConfig.network)
+        // Null until either the caller sets one via syncConfig(...) or build()
+        // falls back to the default. Deferred so that REGTEST callers — for
+        // whom there is no public default endpoint — can supply their own
+        // SyncConfig.CustomApi(...) before build() is invoked, instead of the
+        // Builder constructor throwing eagerly.
+        private var syncConfig: SyncConfig? = null
         private var fallbackSyncConfigs: MutableList<SyncConfig> = mutableListOf()
         private var storage: WalletStorage = InMemoryWalletStorage()
         private var scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -369,7 +374,8 @@ class BitcoinKit private constructor(
                 utxoProvider = utxoProvider,
                 addressConverter = addressConverter
             )
-            val allSyncConfigs = listOf(syncConfig) + fallbackSyncConfigs
+            val primarySyncConfig = syncConfig ?: SyncConfig.BlockStream.forNetwork(walletConfig.network)
+            val allSyncConfigs = listOf(primarySyncConfig) + fallbackSyncConfigs
             val syncManager = SyncManager(
                 publicKeyManager = publicKeyManager,
                 addressConverter = addressConverter,

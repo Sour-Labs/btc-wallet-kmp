@@ -33,15 +33,15 @@ Add the dependency to your `build.gradle.kts`:
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("io.sourlabs.btc:library:0.1.0")
+            implementation("io.sourlabs.btc:library:0.3.0")
         }
     }
 }
 
 // For single-platform projects (JVM/Android)
 dependencies {
-    implementation("io.sourlabs.btc:library-jvm:0.1.0")  // JVM
-    implementation("io.sourlabs.btc:library-android:0.1.0")  // Android
+    implementation("io.sourlabs.btc:library-jvm:0.3.0")  // JVM
+    implementation("io.sourlabs.btc:library-android:0.3.0")  // Android
 }
 ```
 
@@ -519,14 +519,16 @@ BitcoinKit.scanWallet(mnemonic, ...)         // Scan for existing activity
 
 ## Dependencies
 
-| Library | Version | Purpose |
-|---------|---------|---------|
-| [bitcoin-kmp](https://github.com/ACINQ/bitcoin-kmp) | 0.29.0 | Core Bitcoin implementation |
-| [secp256k1-kmp](https://github.com/ACINQ/secp256k1-kmp) | 0.18.0 | Elliptic curve cryptography |
-| [Ktor](https://ktor.io) | 3.0.0 | HTTP networking |
-| [kotlinx-coroutines](https://github.com/Kotlin/kotlinx.coroutines) | 1.9.0 | Async/await and Flows |
-| [kotlinx-serialization](https://github.com/Kotlin/kotlinx.serialization) | 1.7.0 | JSON serialization |
-| [kotlinx-datetime](https://github.com/Kotlin/kotlinx-datetime) | 0.6.0 | Date/time operations |
+Current versions are tracked in [`gradle/libs.versions.toml`](gradle/libs.versions.toml).
+
+| Library | Purpose |
+|---------|---------|
+| [bitcoin-kmp](https://github.com/ACINQ/bitcoin-kmp) | Core Bitcoin implementation |
+| [secp256k1-kmp](https://github.com/ACINQ/secp256k1-kmp) | Elliptic curve cryptography |
+| [Ktor](https://ktor.io) | HTTP networking |
+| [kotlinx-coroutines](https://github.com/Kotlin/kotlinx.coroutines) | Async/await and Flows |
+| [kotlinx-serialization](https://github.com/Kotlin/kotlinx.serialization) | JSON serialization |
+| [Kermit](https://github.com/touchlab/Kermit) | Multiplatform logging |
 
 ## Building from Source
 

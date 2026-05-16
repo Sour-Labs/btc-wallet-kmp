@@ -88,14 +88,17 @@ kotlin {
 mavenPublishing {
     publishToMavenCentral()
 
-    // signAllPublications() intentionally left off — Maven Central requires
-    // GPG-signed artifacts, but the signing keys live with the maintainers
-    // rather than in the repo. Forks and contributors can still build /
-    // `publishToMavenLocal` without touching this; only the Central-publish
-    // path (which is gated to maintainers anyway) needs the keys configured.
-    // To enable: provide `signing.keyId`/`signing.password`/`signing.secretKey`
-    // (or `ORG_GRADLE_PROJECT_*` env vars) and uncomment the call below.
-    // signAllPublications()
+    // Gated on signing credentials so forks and contributors can run
+    // `publishToMavenLocal` without configuring GPG. The maintainer-only
+    // Maven Central publish path requires `signing.keyId` /
+    // `signing.password` / `signing.secretKey` (or `ORG_GRADLE_PROJECT_*`
+    // env vars); when those are present the artifacts are signed.
+    if (project.hasProperty("signing.keyId") ||
+        System.getenv("ORG_GRADLE_PROJECT_signingInMemoryKey") != null ||
+        System.getenv("ORG_GRADLE_PROJECT_signingKeyId") != null
+    ) {
+        signAllPublications()
+    }
 
     coordinates(group.toString(), "library", version.toString())
 
