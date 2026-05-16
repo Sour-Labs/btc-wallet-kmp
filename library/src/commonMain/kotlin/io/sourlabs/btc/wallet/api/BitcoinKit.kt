@@ -372,7 +372,9 @@ class BitcoinKit private constructor(
                 hdWalletManager = hdWalletManager,
                 publicKeyManager = publicKeyManager,
                 utxoProvider = utxoProvider,
-                addressConverter = addressConverter
+                addressConverter = addressConverter,
+                transactionStorage = storage.transactionStorage,
+                unspentOutputStorage = storage.unspentOutputStorage,
             )
             val primarySyncConfig = syncConfig ?: SyncConfig.BlockStream.forNetwork(walletConfig.network)
             val allSyncConfigs = listOf(primarySyncConfig) + fallbackSyncConfigs
