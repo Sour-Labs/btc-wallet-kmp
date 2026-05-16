@@ -558,6 +558,11 @@ the PR workflow, and code conventions.
 To report a vulnerability, please follow the process in [SECURITY.md](SECURITY.md).
 Do not open a public issue for security-sensitive bugs.
 
+## Code of Conduct
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). By
+participating, you agree to abide by its terms.
+
 ## License
 
 ```
