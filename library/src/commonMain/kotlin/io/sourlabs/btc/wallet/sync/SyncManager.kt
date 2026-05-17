@@ -98,42 +98,76 @@ class SyncManager(
         }
         log.i { "start(mode=$mode)" }
 
+        // Reset to NotSynced before launching so any stale terminal value from a
+        // previous run (stop() doesn't clear _syncState) doesn't make
+        // BitcoinKit.start()'s `syncState.first { Synced || Error }` await return
+        // immediately on a restart, before the new sync has had a chance to run.
+        _syncState.value = SyncState.NotSynced
+
         syncJob = scope.launch {
-            when (mode) {
-                SyncMode.OneShot, SyncMode.Continuous -> {
-                    val lastError = tryStartWithFallbacks()
-                    if (lastError != null) {
-                        log.e(lastError) { "Sync failed across all configured sync configs" }
-                        _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
-                        _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
-                        _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
+            try {
+                when (mode) {
+                    SyncMode.OneShot, SyncMode.Continuous -> {
+                        val lastError = tryStartWithFallbacks()
+                        if (lastError != null) {
+                            log.e(lastError) { "Sync failed across all configured sync configs" }
+                            _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
+                            _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+                            _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
+                        }
+                        if (mode == SyncMode.OneShot) {
+                            // No polling follows, so release the HTTP client eagerly instead of
+                            // holding it open until the caller remembers to call stop().
+                            log.d { "OneShot complete, releasing HTTP client" }
+                            api?.close()
+                            api = null
+                            return@launch
+                        }
+                        if (lastError != null) return@launch
+                        log.i { "Entering poll loop (intervalMs=$pollingInterval)" }
+                        pollLoop()
                     }
-                    if (mode == SyncMode.OneShot) {
-                        // No polling follows, so release the HTTP client eagerly instead of
-                        // holding it open until the caller remembers to call stop().
-                        log.d { "OneShot complete, releasing HTTP client" }
+                    SyncMode.IncrementalOnly -> {
+                        // Caller's contract: local storage is already fresh. Bind the API
+                        // against the current activeSyncConfig (which may be a fallback
+                        // established by a previous Continuous/OneShot sync) without doing
+                        // a full scan, mark the kit Synced immediately, then start polling.
+                        log.i { "IncrementalOnly: skipping full sync, marking Synced and polling" }
                         api?.close()
-                        api = null
-                        return@launch
+                        api = buildApi()
+
+                        val syncTime = Clock.System.now().toEpochMilliseconds()
+                        _syncState.value = SyncState.Synced(syncTime)
+                        _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+
+                        pollLoop()
                     }
-                    if (lastError != null) return@launch
-                    log.i { "Entering poll loop (intervalMs=$pollingInterval)" }
-                    pollLoop()
                 }
-                SyncMode.IncrementalOnly -> {
-                    // Caller's contract: local storage is already fresh. Bind the API
-                    // against the current activeSyncConfig (which may be a fallback
-                    // established by a previous Continuous/OneShot sync) without doing
-                    // a full scan, mark the kit Synced immediately, then start polling.
-                    log.i { "IncrementalOnly: skipping full sync, marking Synced and polling" }
-                    api?.close()
-                    api = buildApi()
-
-                    val syncTime = Clock.System.now().toEpochMilliseconds()
-                    _syncState.value = SyncState.Synced(syncTime)
-                    _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
-
-                    pollLoop()
+            } catch (e: CancellationException) {
+                // stop() cancels this job via cancelAndJoin. Without flipping syncState
+                // to a terminal value, BitcoinKit.start()'s `syncState.first { Synced ||
+                // Error }` from a different coroutine would hang forever. StateFlow
+                // updates are synchronous so they still run mid-cancellation; rethrow
+                // to keep the structured-concurrency contract.
+                _syncState.value = SyncState.Error("Sync cancelled", e)
+                throw e
+            } catch (e: Throwable) {
+                // Unexpected non-CE error — for example, buildApi() throwing in the
+                // IncrementalOnly path before _syncState gets set to Synced, or an
+                // IllegalStateException out of the API construction. Without this
+                // catch, awaiters of `first { Synced || Error }` would also hang.
+                // Swallow rather than rethrow: the caller observes Error via
+                // syncState and decides what to do; rethrowing would surface in the
+                // wallet's scope's uncaught-exception handler instead.
+                log.e(e) { "Unexpected error in sync coroutine" }
+                _syncState.value = SyncState.Error(e.message ?: "Unexpected sync failure", e)
+            } finally {
+                // Defense in depth: even if some future code path slips past both
+                // catches without writing a terminal state, force one here. No-op if
+                // the state is already Synced or Error.
+                val current = _syncState.value
+                if (current !is SyncState.Synced && current !is SyncState.Error) {
+                    _syncState.value = SyncState.Error("Sync exited without a terminal state", null)
                 }
             }
         }

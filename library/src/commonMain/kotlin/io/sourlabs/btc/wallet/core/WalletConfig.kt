@@ -149,18 +149,23 @@ sealed class WalletConfig {
         override val gapLimit: Int = 20,
         override val confirmationsThreshold: Int = 1,
     ) : WalletConfig() {
-        private val parsed: io.sourlabs.btc.wallet.descriptors.Descriptor =
-            io.sourlabs.btc.wallet.descriptors.Descriptor.parse(descriptor)
-
-        override val purpose: Purpose = parsed.purpose
-        override val network: Network = parsed.network
-        override val account: Int = parsed.account
+        // Initialized in init {} so any DescriptorException surfaces from a
+        // clearly-construction-time block, not from a property-initializer
+        // chain that's harder to read in a stack trace.
+        private val parsed: io.sourlabs.btc.wallet.descriptors.Descriptor
+        override val purpose: Purpose
+        override val network: Network
+        override val account: Int
 
         /** The parsed descriptor — exposed for downstream consumers. */
         val parsedDescriptor: io.sourlabs.btc.wallet.descriptors.Descriptor get() = parsed
 
         init {
             require(gapLimit > 0) { "Gap limit must be positive" }
+            parsed = io.sourlabs.btc.wallet.descriptors.Descriptor.parse(descriptor)
+            purpose = parsed.purpose
+            network = parsed.network
+            account = parsed.account
         }
     }
 
