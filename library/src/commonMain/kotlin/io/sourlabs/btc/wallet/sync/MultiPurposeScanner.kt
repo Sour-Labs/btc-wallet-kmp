@@ -44,17 +44,6 @@ data class WalletScanResult(
 }
 
 /**
- * Progress update during scanning.
- */
-data class ScanProgress(
-    val currentPurpose: Purpose,
-    val currentChain: String, // "external" or "internal"
-    val currentIndex: Int,
-    val totalPurposes: Int,
-    val completedPurposes: Int
-)
-
-/**
  * Scans multiple BIP purposes to discover existing wallet funds during restoration.
  * This is essential for wallets that may have been used with different address types.
  *
