@@ -1,5 +1,6 @@
 package io.sourlabs.btc.wallet.core
 
+import io.sourlabs.btc.wallet.descriptors.Descriptor
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
 
@@ -54,6 +55,13 @@ sealed class WalletConfig {
 
     /**
      * Create a wallet from raw seed bytes.
+     *
+     * **Security note:** [seed] is retained on the heap as a normal `ByteArray`
+     * for the lifetime of this config — Kotlin Multiplatform doesn't expose a
+     * cross-platform primitive for locked / zeroed memory. Callers handling
+     * sensitive seed material should clear their copy after the wallet is
+     * built (`seed.fill(0)`) and avoid retaining the [FromSeed] instance any
+     * longer than needed.
      */
     data class FromSeed(
         val seed: ByteArray,
@@ -141,7 +149,7 @@ sealed class WalletConfig {
      * key's SLIP-132 prefix picks the network. [account] is taken from the
      * third path step of the key origin if present, else 0.
      *
-     * See [io.sourlabs.btc.wallet.descriptors.Descriptor] for the supported
+     * See [Descriptor] for the supported
      * subset.
      */
     data class WatchOnlyDescriptor(
@@ -152,17 +160,17 @@ sealed class WalletConfig {
         // Initialized in init {} so any DescriptorException surfaces from a
         // clearly-construction-time block, not from a property-initializer
         // chain that's harder to read in a stack trace.
-        private val parsed: io.sourlabs.btc.wallet.descriptors.Descriptor
+        private val parsed: Descriptor
         override val purpose: Purpose
         override val network: Network
         override val account: Int
 
         /** The parsed descriptor — exposed for downstream consumers. */
-        val parsedDescriptor: io.sourlabs.btc.wallet.descriptors.Descriptor get() = parsed
+        val parsedDescriptor: Descriptor get() = parsed
 
         init {
             require(gapLimit > 0) { "Gap limit must be positive" }
-            parsed = io.sourlabs.btc.wallet.descriptors.Descriptor.parse(descriptor)
+            parsed = Descriptor.parse(descriptor)
             purpose = parsed.purpose
             network = parsed.network
             account = parsed.account

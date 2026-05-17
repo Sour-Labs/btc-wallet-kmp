@@ -36,14 +36,6 @@ class SyncManager(
     init {
         require(syncConfigs.isNotEmpty()) { "At least one SyncConfig must be provided" }
     }
-    constructor(
-        publicKeyManager: PublicKeyManager,
-        addressConverter: AddressConverter,
-        transactionStorage: TransactionStorage,
-        utxoStorage: UnspentOutputStorage,
-        blockInfoStorage: BlockInfoStorage,
-        syncConfig: SyncConfig
-    ) : this(publicKeyManager, addressConverter, transactionStorage, utxoStorage, blockInfoStorage, listOf(syncConfig))
 
     private val _syncState = MutableStateFlow<SyncState>(SyncState.NotSynced)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()

@@ -501,6 +501,27 @@ try {
 }
 ```
 
+## Logging
+
+The library logs through [Kermit](https://github.com/touchlab/Kermit) with one
+tag per major component, so consumers can filter or suppress per-component:
+
+| Tag | Source |
+|-----|--------|
+| `BitcoinKit` | `BitcoinKit` (start/stop/send/scan entry points) |
+| `SyncManager` | `SyncManager` (sync lifecycle, polling, fallback decisions) |
+| `BlockchainExplorerApi` | `BlockchainExplorerApi` (HTTP, retry, auth) |
+| `MultiPurposeScanner` | `MultiPurposeScanner` (per-purpose chain walks during restoration) |
+
+Raise the global minimum severity to quiet things down:
+
+```kotlin
+co.touchlab.kermit.Logger.setMinSeverity(co.touchlab.kermit.Severity.Warn)
+```
+
+See [Kermit's docs](https://kermit.touchlab.co/) for per-tag filtering and custom
+log writers if you need finer control.
+
 ## API Reference
 
 ### BitcoinKit

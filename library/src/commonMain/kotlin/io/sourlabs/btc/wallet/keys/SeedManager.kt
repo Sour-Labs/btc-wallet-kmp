@@ -60,9 +60,11 @@ object SeedManager {
     }
 
     /**
-     * Generates a new mnemonic code.
-     *
-     * TODO: Support more languages
+     * Generates a new mnemonic code in the BIP-39 English wordlist. Other
+     * wordlists (Japanese, Korean, Spanish, etc.) are not on this library's
+     * roadmap — callers who need them should generate entropy via
+     * [generateEntropy] and run it through `MnemonicCode.toMnemonics(entropy,
+     * wordlist)` directly.
      *
      * @param mnemonicSize The desired size of the mnemonic. Defaults to [MnemonicSize.Max] with 24 words.
      * @return A list of strings representing the mnemonic code.
