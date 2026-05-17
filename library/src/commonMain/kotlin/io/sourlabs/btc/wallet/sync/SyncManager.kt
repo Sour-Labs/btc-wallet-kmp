@@ -98,6 +98,12 @@ class SyncManager(
         }
         log.i { "start(mode=$mode)" }
 
+        // Reset to NotSynced before launching so any stale terminal value from a
+        // previous run (stop() doesn't clear _syncState) doesn't make
+        // BitcoinKit.start()'s `syncState.first { Synced || Error }` await return
+        // immediately on a restart, before the new sync has had a chance to run.
+        _syncState.value = SyncState.NotSynced
+
         syncJob = scope.launch {
             when (mode) {
                 SyncMode.OneShot, SyncMode.Continuous -> {
