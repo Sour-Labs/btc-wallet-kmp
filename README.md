@@ -33,15 +33,15 @@ Add the dependency to your `build.gradle.kts`:
 kotlin {
     sourceSets {
         commonMain.dependencies {
-            implementation("io.sourlabs.btc:library:0.3.0")
+            implementation("io.sourlabs.btc:library:0.4.0")
         }
     }
 }
 
 // For single-platform projects (JVM/Android)
 dependencies {
-    implementation("io.sourlabs.btc:library-jvm:0.3.0")  // JVM
-    implementation("io.sourlabs.btc:library-android:0.3.0")  // Android
+    implementation("io.sourlabs.btc:library-jvm:0.4.0")  // JVM
+    implementation("io.sourlabs.btc:library-android:0.4.0")  // Android
 }
 ```
 
