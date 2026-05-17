@@ -151,6 +151,24 @@ class SyncManager(
                 // to keep the structured-concurrency contract.
                 _syncState.value = SyncState.Error("Sync cancelled", e)
                 throw e
+            } catch (e: Throwable) {
+                // Unexpected non-CE error — for example, buildApi() throwing in the
+                // IncrementalOnly path before _syncState gets set to Synced, or an
+                // IllegalStateException out of the API construction. Without this
+                // catch, awaiters of `first { Synced || Error }` would also hang.
+                // Swallow rather than rethrow: the caller observes Error via
+                // syncState and decides what to do; rethrowing would surface in the
+                // wallet's scope's uncaught-exception handler instead.
+                log.e(e) { "Unexpected error in sync coroutine" }
+                _syncState.value = SyncState.Error(e.message ?: "Unexpected sync failure", e)
+            } finally {
+                // Defense in depth: even if some future code path slips past both
+                // catches without writing a terminal state, force one here. No-op if
+                // the state is already Synced or Error.
+                val current = _syncState.value
+                if (current !is SyncState.Synced && current !is SyncState.Error) {
+                    _syncState.value = SyncState.Error("Sync exited without a terminal state", null)
+                }
             }
         }
     }
