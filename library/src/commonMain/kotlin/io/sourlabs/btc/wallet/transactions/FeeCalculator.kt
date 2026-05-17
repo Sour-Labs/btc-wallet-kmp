@@ -86,4 +86,31 @@ internal object FeeCalculator {
         outputs: List<ScriptType>,
         feeRateSatPerVb: Long,
     ): Long = estimateVSize(inputs, outputs) * feeRateSatPerVb
+
+    /**
+     * Minimum non-dust output value for the given script type, computed via
+     * Bitcoin Core's standard rule: an output is "dust" if it costs more in fees
+     * to spend than a third of its own value would yield at the minimum relay
+     * fee. So the dust floor is `3 × inputVSize × minRelayFeeSatPerVb`.
+     *
+     * Per-type defaults at minRelayFee = 1 sat/vB:
+     *   P2PKH:        444 sats  (3 × 148)
+     *   P2SH / P2SH_P2WPKH: 273 sats  (3 × 91)
+     *   P2WPKH:       204 sats  (3 × 68)
+     *   P2TR:         174 sats  (3 × 58)
+     *
+     * For generic [ScriptType.P2SH], the worst-case-typical assumption is
+     * P2SH-wrapping-P2WPKH (91 vbytes) — the only kind of P2SH this wallet
+     * is likely to send to in practice.
+     */
+    fun dustThreshold(scriptType: ScriptType, minRelayFeeSatPerVb: Long = 1): Long {
+        val spendingInputVSize = when (scriptType) {
+            ScriptType.P2PKH -> 148
+            ScriptType.P2SH,
+            ScriptType.P2SH_P2WPKH -> 91
+            ScriptType.P2WPKH -> 68
+            ScriptType.P2TR -> 58
+        }
+        return 3L * spendingInputVSize * minRelayFeeSatPerVb
+    }
 }

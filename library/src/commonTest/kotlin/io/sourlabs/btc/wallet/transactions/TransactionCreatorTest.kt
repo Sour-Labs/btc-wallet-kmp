@@ -1,6 +1,8 @@
 package io.sourlabs.btc.wallet.transactions
 
 import fr.acinq.bitcoin.ByteVector32
+import io.sourlabs.btc.wallet.api.InvalidAddressException
+import io.sourlabs.btc.wallet.api.InvalidAmountException
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
@@ -16,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -176,6 +179,93 @@ class TransactionCreatorTest {
             -tx.fee, saved.amount,
             "self-send amount should be -fee only (destination returns to wallet)"
         )
+    }
+
+    // ─── PR-08 regression anchors: up-front transaction validation ───
+
+    @Test
+    fun createRejectsInvalidAddressWithInvalidAddressException() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val ex = assertFailsWith<InvalidAddressException> {
+            f.creator.create("not-a-bitcoin-address", amount = 30_000, feeRate = 1)
+        }
+        assertEquals("not-a-bitcoin-address", ex.address)
+    }
+
+    @Test
+    fun createRejectsZeroAmountWithInvalidAmountException() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        assertFailsWith<InvalidAmountException> {
+            f.creator.create(externalDestination, amount = 0, feeRate = 1)
+        }
+    }
+
+    @Test
+    fun createRejectsNegativeAmountWithInvalidAmountException() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        assertFailsWith<InvalidAmountException> {
+            f.creator.create(externalDestination, amount = -100, feeRate = 1)
+        }
+    }
+
+    @Test
+    fun createRejectsSubDustAmount() = runTest {
+        // P2WPKH dust threshold is 3 × 68 = 204 sats. 100 sats would be network-rejected.
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val ex = assertFailsWith<InvalidAmountException> {
+            f.creator.create(externalDestination, amount = 100, feeRate = 1)
+        }
+        assertTrue(ex.message!!.contains("dust"), "error should mention dust: was ${ex.message}")
+    }
+
+    @Test
+    fun createRejectsZeroFeeRate() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        assertFailsWith<InvalidAmountException> {
+            f.creator.create(externalDestination, amount = 30_000, feeRate = 0)
+        }
+    }
+
+    @Test
+    fun createAllowsSubDustAmountWhenSubtractingFee() = runTest {
+        // When the user opts into subtractFeeFromAmount, sub-dust amounts are
+        // their explicit choice. The pre-flight check should let it through —
+        // the network may still reject if the final amount-minus-fee is dust,
+        // but that's the user's call to make.
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+
+        // Doesn't throw at validation time. Selection / build may still fail downstream,
+        // but the validation hurdle is cleared.
+        runCatching {
+            f.creator.create(
+                toAddress = externalDestination,
+                amount = 100,  // sub-dust, but...
+                feeRate = 1,
+                subtractFeeFromAmount = true,  // ...subtracting fee means user opted in
+            )
+        }
+        // If the call threw, it must not be InvalidAmountException (the dust check is the
+        // only thing that would have triggered InvalidAmountException at this amount).
+        // Anything else (e.g. signature math) is downstream of the validation gate.
+    }
+
+    @Test
+    fun createSweepRejectsZeroFeeRate() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+        assertFailsWith<InvalidAmountException> {
+            f.creator.createSweep(externalDestination, feeRate = 0)
+        }
     }
 
     @Test

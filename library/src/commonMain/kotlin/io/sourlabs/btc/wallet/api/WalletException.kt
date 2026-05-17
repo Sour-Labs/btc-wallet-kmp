@@ -25,6 +25,18 @@ class InvalidAddressException(
 ) : WalletException(message)
 
 /**
+ * Exception thrown when a transaction amount or fee rate fails validation
+ * before the wallet builds the transaction. Common cases:
+ *  - Non-positive amount.
+ *  - Amount below the destination's dust threshold (and not subtracting fee).
+ *  - Fee rate below the standard 1 sat/vB minimum relay fee.
+ *
+ * Distinguished from [InsufficientFundsException], which is raised after
+ * UTXO selection determines the wallet can't cover the cost.
+ */
+class InvalidAmountException(message: String) : WalletException(message)
+
+/**
  * Exception thrown when sync fails.
  */
 class SyncException(
