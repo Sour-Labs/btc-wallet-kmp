@@ -66,8 +66,11 @@ internal suspend fun <T> withRetry(
 
 /**
  * API client for blockchain data.
+ *
+ * Open so that focused tests (e.g. simulating network failures during a wallet
+ * scan) can subclass with overridden methods rather than spin up a Ktor MockEngine.
  */
-class BlockchainExplorerApi private constructor(
+open class BlockchainExplorerApi internal constructor(
     private val baseUrl: String,
     private val auth: SyncConfig.BlockStream.Auth?,
     httpClient: HttpClient?
@@ -141,7 +144,7 @@ class BlockchainExplorerApi private constructor(
     /**
      * Get address information including transaction history.
      */
-    suspend fun getAddress(address: String): AddressResponse = withRetry {
+    open suspend fun getAddress(address: String): AddressResponse = withRetry {
         log.d { "GET /address/$address" }
         client.get("$baseUrl/address/$address").body()
     }
@@ -184,7 +187,7 @@ class BlockchainExplorerApi private constructor(
     /**
      * Get UTXOs for an address.
      */
-    suspend fun getAddressUtxos(address: String): List<ApiUtxo> = withRetry {
+    open suspend fun getAddressUtxos(address: String): List<ApiUtxo> = withRetry {
         log.d { "GET /address/$address/utxo" }
         client.get("$baseUrl/address/$address/utxo").body()
     }

@@ -408,22 +408,27 @@ class BitcoinKit private constructor(
         fun builder(config: WalletConfig): Builder = Builder(config)
 
         /**
-         * Scan for existing wallet activity across all address types.
-         * Useful during wallet restoration to discover funds.
+         * Scan for existing wallet activity across all address types. Useful
+         * during wallet restoration to discover funds.
+         *
+         * Accepts any [SyncConfig] — defaults to the public Blockstream endpoint
+         * for the given network when [syncConfig] is null. Pass a
+         * [SyncConfig.MempoolSpace], [SyncConfig.CustomApi], or an authenticated
+         * Blockstream Enterprise config when those suit better.
          */
         suspend fun scanWallet(
             mnemonic: List<String>,
             passphrase: String = "",
             network: Network = Network.MAINNET,
-            apiBaseUrl: String? = null,
-            blockStreamConfig: SyncConfig.BlockStream? = null
+            syncConfig: SyncConfig? = null,
         ): WalletScanResult {
             log.i { "scanWallet(network=$network) started" }
             val seed = fr.acinq.bitcoin.MnemonicCode.toSeed(mnemonic, passphrase)
-            val api = when {
-                blockStreamConfig != null -> BlockchainExplorerApi(blockStreamConfig)
-                apiBaseUrl != null -> BlockchainExplorerApi(apiBaseUrl)
-                else -> BlockchainExplorerApi(SyncConfig.BlockStream.forNetwork(network).baseUrl)
+            val effectiveSyncConfig = syncConfig ?: SyncConfig.BlockStream.forNetwork(network)
+            val api = when (effectiveSyncConfig) {
+                is SyncConfig.BlockStream -> BlockchainExplorerApi(effectiveSyncConfig)
+                is SyncConfig.MempoolSpace -> BlockchainExplorerApi(effectiveSyncConfig.baseUrl)
+                is SyncConfig.CustomApi -> BlockchainExplorerApi(effectiveSyncConfig.baseUrl)
             }
 
             return try {
