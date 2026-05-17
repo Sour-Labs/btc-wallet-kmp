@@ -71,6 +71,16 @@ class AddressConverterTest {
     }
 
     @Test
+    fun testTestnet4P2WPKHAddress() {
+        // TESTNET4 produces the same `tb1q…` bech32 prefix as TESTNET (Testnet3) —
+        // both Testnet3 and Testnet4 use the same bech32 HRP. Anchors PR-12.
+        val wallet = HDWalletManager.fromMnemonic(testMnemonic, "", Purpose.BIP84, Network.TESTNET4)
+        val converter = AddressConverter(Network.TESTNET4)
+        val address = converter.toP2WPKHAddress(wallet.derivePublicKey(true, 0))
+        assertTrue(address.startsWith("tb1q"), "P2WPKH testnet4 address should start with tb1q, got $address")
+    }
+
+    @Test
     fun testAddressValidation() {
         val converter = AddressConverter(Network.MAINNET)
 

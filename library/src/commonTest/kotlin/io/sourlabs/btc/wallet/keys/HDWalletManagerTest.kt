@@ -179,6 +179,31 @@ class HDWalletManagerTest {
     }
 
     @Test
+    fun testnet4DerivesSameKeysAsTestnet3() {
+        // TESTNET4 shares BIP-44 coin type 1 with TESTNET (Testnet3), so HD
+        // derivation paths are identical — only the underlying chain differs.
+        // Anchors PR-12's TESTNET4 addition.
+        val testnetWallet = HDWalletManager.fromMnemonic(
+            testMnemonic, purpose = Purpose.BIP84, network = Network.TESTNET,
+        )
+        val testnet4Wallet = HDWalletManager.fromMnemonic(
+            testMnemonic, purpose = Purpose.BIP84, network = Network.TESTNET4,
+        )
+        for (i in 0..3) {
+            assertEquals(
+                testnetWallet.derivePublicKey(true, i),
+                testnet4Wallet.derivePublicKey(true, i),
+                "TESTNET4 should derive identical external keys to TESTNET at index $i",
+            )
+            assertEquals(
+                testnetWallet.derivePrivateKey(true, i).privateKey,
+                testnet4Wallet.derivePrivateKey(true, i).privateKey,
+                "TESTNET4 should derive identical external private keys to TESTNET at index $i",
+            )
+        }
+    }
+
+    @Test
     fun fromExtendedPublicKeyRejectsMasterDepth() {
         // Master xpubs are also depth 0; same rationale as the xprv case.
         val masterXpub = DeterministicWallet.publicKey(
