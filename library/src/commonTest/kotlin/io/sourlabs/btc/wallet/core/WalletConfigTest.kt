@@ -27,7 +27,7 @@ class WalletConfigTest {
     @Test
     fun fromExtendedPrivateKeyRequiresPositiveGapLimit() {
         assertFailsWith<IllegalArgumentException> {
-            WalletConfig.FromExtendedPrivateKey(extendedKey = "xprv", gapLimit = 0)
+            WalletConfig.FromExtendedPrivateKey(accountExtendedPrivateKey = "xprv", gapLimit = 0)
         }
     }
 

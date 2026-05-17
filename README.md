@@ -124,21 +124,31 @@ val config = WalletConfig.FromSeed(
 
 ### From Extended Private Key
 
+The key must be at *account* depth — `m/purpose'/coin'/account'`, BIP-32 depth 3
+(e.g. `xprv9z…` exported by a hardware wallet for a specific account). Master
+xprvs (depth 0) are rejected: deriving the account from a master could silently
+produce the wrong wallet, so callers must do that derivation themselves.
+
 ```kotlin
 val config = WalletConfig.FromExtendedPrivateKey(
-    extendedKey = "xprv9s21ZrQH143K...",  // or yprv/zprv
+    accountExtendedPrivateKey = "xprv9z...",  // at m/84'/0'/0' for this example
     purpose = Purpose.BIP84,
-    network = Network.MAINNET
+    network = Network.MAINNET,
+    account = 0,
 )
 ```
 
 ### Watch-Only Wallet
 
+The key must be at account depth as well — typical hardware-wallet xpub exports
+already satisfy this (Coldcard, Ledger, Trezor export at `m/purpose'/coin'/account'`).
+
 ```kotlin
 val config = WalletConfig.WatchOnly(
-    extendedPublicKey = "zpub6rFR7...",   // or xpub/ypub
+    extendedPublicKey = "zpub6rFR7...",   // account-level xpub/ypub/zpub
     purpose = Purpose.BIP84,
-    network = Network.MAINNET
+    network = Network.MAINNET,
+    account = 0,
 )
 ```
 

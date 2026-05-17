@@ -1,9 +1,14 @@
 package io.sourlabs.btc.wallet.keys
 
+import fr.acinq.bitcoin.ByteVector
+import fr.acinq.bitcoin.DeterministicWallet
+import io.sourlabs.btc.wallet.api.WalletInitializationException
+import io.sourlabs.btc.wallet.keys.SeedManager.toSeed
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -14,6 +19,27 @@ class HDWalletManagerTest {
         "abandon", "abandon", "abandon", "abandon", "abandon", "abandon",
         "abandon", "abandon", "abandon", "abandon", "abandon", "about"
     )
+
+    /** Build the account-level xprv at m/84'/0'/0' for the test mnemonic. */
+    private fun accountXprvFor(purpose: Purpose, network: Network, account: Int = 0): String {
+        val master = DeterministicWallet.generate(ByteVector(testMnemonic.toSeed()))
+        val purposeKey = DeterministicWallet.derivePrivateKey(
+            master, DeterministicWallet.hardened(purpose.value.toLong())
+        )
+        val coinKey = DeterministicWallet.derivePrivateKey(
+            purposeKey, DeterministicWallet.hardened(network.coinType.toLong())
+        )
+        val accountKey = DeterministicWallet.derivePrivateKey(
+            coinKey, DeterministicWallet.hardened(account.toLong())
+        )
+        return accountKey.encode(testnet = network != Network.MAINNET)
+    }
+
+    /** Encode the master xprv (depth 0) — used to anchor the rejection test. */
+    private fun masterXprv(): String {
+        val master = DeterministicWallet.generate(ByteVector(testMnemonic.toSeed()))
+        return master.encode(testnet = false)
+    }
 
     @Test
     fun testWalletCreationFromMnemonic() {
@@ -96,5 +122,75 @@ class HDWalletManagerTest {
 
         assertTrue(mainnetPath.contains("/0'/")) // coin type 0
         assertTrue(testnetPath.contains("/1'/")) // coin type 1
+    }
+
+    @Test
+    fun fromExtendedPrivateKeyRejectsMasterDepth() {
+        // Master xprvs are at BIP-32 depth 0. The library refuses them because
+        // it can't tell whether the caller meant "use this as my account key
+        // somehow" or "this is the master, please derive the account from it"
+        // — the answers produce two different wallets, silently.
+        val ex = assertFailsWith<WalletInitializationException> {
+            HDWalletManager.fromExtendedPrivateKey(
+                accountExtendedPrivateKey = masterXprv(),
+                purpose = Purpose.BIP84,
+                network = Network.MAINNET,
+            )
+        }
+        assertTrue(
+            ex.message!!.contains("depth 3"),
+            "error should mention the expected depth: was ${ex.message}",
+        )
+        assertTrue(
+            ex.message!!.contains("Got depth 0"),
+            "error should name the actual depth: was ${ex.message}",
+        )
+    }
+
+    @Test
+    fun fromExtendedPrivateKeyAtAccountDepthMatchesFromMnemonic() {
+        // The point of the account-level convention: if a caller exports the
+        // account xprv from a hardware wallet and passes it here, the resulting
+        // wallet must derive the same external/internal keys as the mnemonic-
+        // backed wallet for the same seed.
+        val accountXprv = accountXprvFor(Purpose.BIP84, Network.MAINNET)
+        val fromXprv = HDWalletManager.fromExtendedPrivateKey(
+            accountExtendedPrivateKey = accountXprv,
+            purpose = Purpose.BIP84,
+            network = Network.MAINNET,
+        )
+        val fromMnemonic = HDWalletManager.fromMnemonic(
+            mnemonic = testMnemonic,
+            purpose = Purpose.BIP84,
+            network = Network.MAINNET,
+        )
+        for (i in 0..3) {
+            assertEquals(
+                fromMnemonic.derivePublicKey(true, i),
+                fromXprv.derivePublicKey(true, i),
+                "external key mismatch at index $i",
+            )
+            assertEquals(
+                fromMnemonic.derivePrivateKey(true, i).privateKey,
+                fromXprv.derivePrivateKey(true, i).privateKey,
+                "external private key mismatch at index $i",
+            )
+        }
+    }
+
+    @Test
+    fun fromExtendedPublicKeyRejectsMasterDepth() {
+        // Master xpubs are also depth 0; same rationale as the xprv case.
+        val masterXpub = DeterministicWallet.publicKey(
+            DeterministicWallet.generate(ByteVector(testMnemonic.toSeed()))
+        ).encode(testnet = false)
+        val ex = assertFailsWith<WalletInitializationException> {
+            HDWalletManager.fromExtendedPublicKey(
+                extendedPublicKey = masterXpub,
+                purpose = Purpose.BIP84,
+                network = Network.MAINNET,
+            )
+        }
+        assertTrue(ex.message!!.contains("depth 3"))
     }
 }
