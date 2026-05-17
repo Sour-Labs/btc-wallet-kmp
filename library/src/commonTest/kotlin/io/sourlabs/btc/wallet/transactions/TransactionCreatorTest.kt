@@ -155,6 +155,30 @@ class TransactionCreatorTest {
     }
 
     @Test
+    fun selfSendAmountIsNegativeFeeOnly() = runTest {
+        // Self-send (destination is one of our own addresses, e.g. consolidation):
+        // the wallet's net change is just -fee — the destination amount comes back
+        // to us. Anchors against the bug where outputAmount only counted the change
+        // output and ignored wallet-owned destination outputs.
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+
+        // Destination = our own external key #0.
+        val ownDestinationAddress = f.converter.toP2WPKHAddress(externalKeys[0].publicKey)
+        // Fund: 100k on external key #1.
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[1], f.converter, 1, 100_000))
+
+        val tx = f.creator.create(ownDestinationAddress, amount = 30_000, feeRate = 1)
+        val saved = f.storage.transactionStorage.getTransaction(tx.txId)!!
+
+        assertEquals(
+            -tx.fee, saved.amount,
+            "self-send amount should be -fee only (destination returns to wallet)"
+        )
+    }
+
+    @Test
     fun sweepRemovesAllSpendableUtxosAndPersistsPendingTx() = runTest {
         val f = newFixture()
         f.publicKeyManager.initialize()

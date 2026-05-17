@@ -161,10 +161,17 @@ class TransactionCreator(
         unspentOutputStorage.deleteUtxos(unsignedTx.utxos.map { it.id })
 
         val inputAmount = unsignedTx.utxos.sumOf { it.value }
-        val outputAmount = if (unsignedTx.hasChange && unsignedTx.changeOutputIndex != null) {
-            signedTx.txOut[unsignedTx.changeOutputIndex].amount.toLong()
-        } else {
-            0L
+        // Sum every output paying to one of our scriptPubKeys, not just the change
+        // output: covers the self-send / consolidation case where the destination
+        // address is also one of ours. Without this, a self-send's persisted
+        // `amount` is `-(destination + fee)` instead of the correct `-fee`, and
+        // the sync's "skip if txid exists" path in TransactionProcessor never
+        // gets a chance to fix it.
+        val walletScripts: List<ByteArray> = publicKeyManager.getAllPublicKeys()
+            .map { addressConverter.createScriptPubKey(it.publicKey, it.scriptType) }
+        val outputAmount = signedTx.txOut.sumOf { out ->
+            val outScript = out.publicKeyScript.toByteArray()
+            if (walletScripts.any { it.contentEquals(outScript) }) out.amount.toLong() else 0L
         }
         val netAmount = outputAmount - inputAmount
 
