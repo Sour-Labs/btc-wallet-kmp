@@ -9,6 +9,7 @@ import io.sourlabs.btc.wallet.storage.BlockInfoStorage
 import io.sourlabs.btc.wallet.storage.TransactionStorage
 import io.sourlabs.btc.wallet.storage.UnspentOutputStorage
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.*
 import kotlin.time.Clock
 
@@ -46,7 +47,15 @@ class SyncManager(
     private val _syncState = MutableStateFlow<SyncState>(SyncState.NotSynced)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
-    private val _events = MutableSharedFlow<WalletEvent>(extraBufferCapacity = 64)
+    // DROP_OLDEST so a slow or absent event collector can't suspend the sync loop
+    // indefinitely. Consumers that need the current state should observe syncState
+    // (a StateFlow with always-available current value) or call getBalance()
+    // directly rather than rely on event replay.
+    private val _events = MutableSharedFlow<WalletEvent>(
+        replay = 0,
+        extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
     val events: SharedFlow<WalletEvent> = _events.asSharedFlow()
 
     private var syncJob: Job? = null
@@ -184,11 +193,13 @@ class SyncManager(
     }
 
     /**
-     * Stop synchronization.
+     * Stop synchronization. Suspends until the sync coroutine has actually exited,
+     * so callers that immediately follow `stop()` with state mutations (e.g.
+     * `clearData()` wiping storage) don't race against an in-flight sync write.
      */
-    fun stop() {
+    suspend fun stop() {
         log.i { "stop()" }
-        syncJob?.cancel()
+        syncJob?.cancelAndJoin()
         syncJob = null
         api?.close()
         api = null
