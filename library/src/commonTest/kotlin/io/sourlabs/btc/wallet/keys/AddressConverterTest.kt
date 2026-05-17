@@ -98,6 +98,39 @@ class AddressConverterTest {
     }
 
     @Test
+    fun parseAddressClassifiesP2SHAsGenericNotNestedSegWit() {
+        // External `3...` addresses can wrap multisig, time-locked scripts, nested
+        // SegWit, or anything else — the scriptPubKey alone (OP_HASH160 <h> OP_EQUAL)
+        // doesn't reveal what the redeem script contains. The parser must report
+        // ScriptType.P2SH (generic) rather than the wallet-specific P2SH_P2WPKH.
+        val converter = AddressConverter(Network.MAINNET)
+        val info = converter.parseAddress("3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")
+        assertNotNull(info)
+        assertEquals(ScriptType.P2SH, info.scriptType)
+    }
+
+    @Test
+    fun toAddressRejectsGenericP2SH() {
+        // P2SH addresses require a redeem script — a public key alone can't produce one.
+        val converter = AddressConverter(Network.MAINNET)
+        val wallet = HDWalletManager.fromMnemonic(testMnemonic, "", Purpose.BIP84, Network.MAINNET)
+        val pubKey = wallet.derivePublicKey(true, 0)
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            converter.toAddress(pubKey, ScriptType.P2SH)
+        }
+    }
+
+    @Test
+    fun createScriptPubKeyRejectsGenericP2SH() {
+        val converter = AddressConverter(Network.MAINNET)
+        val wallet = HDWalletManager.fromMnemonic(testMnemonic, "", Purpose.BIP84, Network.MAINNET)
+        val pubKey = wallet.derivePublicKey(true, 0)
+        kotlin.test.assertFailsWith<IllegalArgumentException> {
+            converter.createScriptPubKey(pubKey, ScriptType.P2SH)
+        }
+    }
+
+    @Test
     fun testToAddressWithScriptType() {
         val wallet = HDWalletManager.fromMnemonic(testMnemonic, "", Purpose.BIP84, Network.MAINNET)
         val converter = AddressConverter(Network.MAINNET)

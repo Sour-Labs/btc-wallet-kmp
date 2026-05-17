@@ -31,6 +31,10 @@ class AddressConverter(
             ScriptType.P2SH_P2WPKH -> toP2SHP2WPKHAddress(publicKey)
             ScriptType.P2WPKH -> toP2WPKHAddress(publicKey)
             ScriptType.P2TR -> toP2TRAddress(publicKey)
+            ScriptType.P2SH -> throw IllegalArgumentException(
+                "Cannot derive an address for generic P2SH from a public key alone — a P2SH " +
+                    "address requires a redeem script. Use P2SH_P2WPKH for nested-SegWit keys."
+            )
         }
     }
 
@@ -87,7 +91,12 @@ class AddressConverter(
 
             val scriptType = when {
                 Script.isPay2pkh(scriptBytes) -> ScriptType.P2PKH
-                Script.isPay2sh(scriptBytes) -> ScriptType.P2SH_P2WPKH
+                // Generic P2SH — the scriptPubKey (`OP_HASH160 <h> OP_EQUAL`) doesn't
+                // expose what the redeem script wraps, so we can't tell apart a
+                // multisig, a nested SegWit, or any other P2SH variant. Wallet-owned
+                // P2SH_P2WPKH keys are matched separately via scriptPubKey comparison
+                // in TransactionProcessor.findByScriptPubKey.
+                Script.isPay2sh(scriptBytes) -> ScriptType.P2SH
                 Script.isPay2wpkh(scriptBytes) -> ScriptType.P2WPKH
                 Script.isPay2tr(scriptBytes) -> ScriptType.P2TR
                 else -> return null
@@ -141,6 +150,10 @@ class AddressConverter(
                 val xOnlyKey = publicKey.xOnly()
                 Script.pay2tr(xOnlyKey, Crypto.TaprootTweak.KeyPathTweak)
             }
+            ScriptType.P2SH -> throw IllegalArgumentException(
+                "Cannot derive a scriptPubKey for generic P2SH from a public key alone — " +
+                    "wallet-owned nested-SegWit keys must be tagged P2SH_P2WPKH."
+            )
         }
         return Script.write(script)
     }
