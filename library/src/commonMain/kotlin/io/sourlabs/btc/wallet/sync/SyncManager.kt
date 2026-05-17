@@ -105,42 +105,52 @@ class SyncManager(
         _syncState.value = SyncState.NotSynced
 
         syncJob = scope.launch {
-            when (mode) {
-                SyncMode.OneShot, SyncMode.Continuous -> {
-                    val lastError = tryStartWithFallbacks()
-                    if (lastError != null) {
-                        log.e(lastError) { "Sync failed across all configured sync configs" }
-                        _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
-                        _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
-                        _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
+            try {
+                when (mode) {
+                    SyncMode.OneShot, SyncMode.Continuous -> {
+                        val lastError = tryStartWithFallbacks()
+                        if (lastError != null) {
+                            log.e(lastError) { "Sync failed across all configured sync configs" }
+                            _syncState.value = SyncState.Error(lastError.message ?: "Sync failed", lastError)
+                            _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+                            _events.emit(WalletEvent.WalletError(lastError.message ?: "Sync failed", lastError))
+                        }
+                        if (mode == SyncMode.OneShot) {
+                            // No polling follows, so release the HTTP client eagerly instead of
+                            // holding it open until the caller remembers to call stop().
+                            log.d { "OneShot complete, releasing HTTP client" }
+                            api?.close()
+                            api = null
+                            return@launch
+                        }
+                        if (lastError != null) return@launch
+                        log.i { "Entering poll loop (intervalMs=$pollingInterval)" }
+                        pollLoop()
                     }
-                    if (mode == SyncMode.OneShot) {
-                        // No polling follows, so release the HTTP client eagerly instead of
-                        // holding it open until the caller remembers to call stop().
-                        log.d { "OneShot complete, releasing HTTP client" }
+                    SyncMode.IncrementalOnly -> {
+                        // Caller's contract: local storage is already fresh. Bind the API
+                        // against the current activeSyncConfig (which may be a fallback
+                        // established by a previous Continuous/OneShot sync) without doing
+                        // a full scan, mark the kit Synced immediately, then start polling.
+                        log.i { "IncrementalOnly: skipping full sync, marking Synced and polling" }
                         api?.close()
-                        api = null
-                        return@launch
+                        api = buildApi()
+
+                        val syncTime = Clock.System.now().toEpochMilliseconds()
+                        _syncState.value = SyncState.Synced(syncTime)
+                        _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+
+                        pollLoop()
                     }
-                    if (lastError != null) return@launch
-                    log.i { "Entering poll loop (intervalMs=$pollingInterval)" }
-                    pollLoop()
                 }
-                SyncMode.IncrementalOnly -> {
-                    // Caller's contract: local storage is already fresh. Bind the API
-                    // against the current activeSyncConfig (which may be a fallback
-                    // established by a previous Continuous/OneShot sync) without doing
-                    // a full scan, mark the kit Synced immediately, then start polling.
-                    log.i { "IncrementalOnly: skipping full sync, marking Synced and polling" }
-                    api?.close()
-                    api = buildApi()
-
-                    val syncTime = Clock.System.now().toEpochMilliseconds()
-                    _syncState.value = SyncState.Synced(syncTime)
-                    _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
-
-                    pollLoop()
-                }
+            } catch (e: CancellationException) {
+                // stop() cancels this job via cancelAndJoin. Without flipping syncState
+                // to a terminal value, BitcoinKit.start()'s `syncState.first { Synced ||
+                // Error }` from a different coroutine would hang forever. StateFlow
+                // updates are synchronous so they still run mid-cancellation; rethrow
+                // to keep the structured-concurrency contract.
+                _syncState.value = SyncState.Error("Sync cancelled", e)
+                throw e
             }
         }
     }
