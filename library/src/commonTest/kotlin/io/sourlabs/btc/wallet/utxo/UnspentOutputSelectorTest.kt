@@ -11,15 +11,27 @@ import kotlin.test.assertTrue
 
 class UnspentOutputSelectorTest {
 
-    private val selector = UnspentOutputSelector(dustThreshold = 546)
+    // P2WPKH wallet — matches the test UTXO scriptType below for "all defaults" tests.
+    private val selector = UnspentOutputSelector(
+        walletScriptType = ScriptType.P2WPKH,
+        dustThreshold = 546,
+    )
 
-    private fun createUtxo(value: Long, confirmations: Int = 6): UnspentOutput {
+    // Default destination: another P2WPKH (bc1q…) address — keeps the fee numbers
+    // matching the legacy "everything is P2WPKH" assumption tests were written against.
+    private val p2wpkhDestination = ScriptType.P2WPKH
+
+    private fun createUtxo(
+        value: Long,
+        confirmations: Int = 6,
+        scriptType: ScriptType = ScriptType.P2WPKH,
+    ): UnspentOutput {
         return UnspentOutput(
             transactionHash = ByteVector32.Zeroes,
             outputIndex = 0,
             value = value,
             scriptPubKey = ByteArray(22),
-            scriptType = ScriptType.P2WPKH,
+            scriptType = scriptType,
             confirmations = confirmations,
             publicKeyPath = "m/84'/0'/0'/0/0",
             blockHeight = 100,
@@ -35,7 +47,7 @@ class UnspentOutputSelectorTest {
             createUtxo(25_000)
         )
 
-        val result = selector.select(utxos, 50_000, 10)
+        val result = selector.select(utxos, 50_000, 10, p2wpkhDestination)
         assertNotNull(result)
         assertTrue(result.totalInput >= result.sendAmount + result.fee)
     }
@@ -46,7 +58,7 @@ class UnspentOutputSelectorTest {
             createUtxo(10_000)
         )
 
-        val result = selector.select(utxos, 100_000, 10)
+        val result = selector.select(utxos, 100_000, 10, p2wpkhDestination)
         assertNull(result, "Should return null when insufficient funds")
     }
 
@@ -58,7 +70,7 @@ class UnspentOutputSelectorTest {
             createUtxo(50_000)
         )
 
-        val result = selector.select(utxos, 80_000, 10, SelectionStrategy.LARGEST_FIRST)
+        val result = selector.select(utxos, 80_000, 10, p2wpkhDestination, SelectionStrategy.LARGEST_FIRST)
         assertNotNull(result)
         // Should select the 100k UTXO first
         assertEquals(1, result.selectedUtxos.size)
@@ -73,7 +85,7 @@ class UnspentOutputSelectorTest {
             createUtxo(50_000)
         )
 
-        val result = selector.select(utxos, 5_000, 10, SelectionStrategy.SMALLEST_FIRST)
+        val result = selector.select(utxos, 5_000, 10, p2wpkhDestination, SelectionStrategy.SMALLEST_FIRST)
         assertNotNull(result)
         // Should select the 10k UTXO first
         assertEquals(10_000, result.selectedUtxos[0].value)
@@ -85,7 +97,7 @@ class UnspentOutputSelectorTest {
             createUtxo(100_000)
         )
 
-        val result = selector.select(utxos, 50_000, 1)
+        val result = selector.select(utxos, 50_000, 1, p2wpkhDestination)
         assertNotNull(result)
         assertTrue(result.hasChange)
         assertTrue(result.change > 0)
@@ -102,7 +114,7 @@ class UnspentOutputSelectorTest {
             createUtxo(100_000)
         )
 
-        val result = selector.select(utxos, 99_200, 5)
+        val result = selector.select(utxos, 99_200, 5, p2wpkhDestination)
         assertNotNull(result)
         // Change should be absorbed into fee if below dust
         assertEquals(0L, result.change, "Change should be absorbed into fee when below dust")
@@ -119,7 +131,7 @@ class UnspentOutputSelectorTest {
             createUtxo(30_000)
         )
 
-        val result = selector.selectManual(utxos, 60_000, 10)
+        val result = selector.selectManual(utxos, 60_000, 10, p2wpkhDestination)
         assertNotNull(result)
         assertEquals(2, result.selectedUtxos.size)
         assertEquals(80_000, result.totalInput)
@@ -127,7 +139,60 @@ class UnspentOutputSelectorTest {
 
     @Test
     fun testEmptyUtxoList() {
-        val result = selector.select(emptyList(), 10_000, 10)
+        val result = selector.select(emptyList(), 10_000, 10, p2wpkhDestination)
         assertNull(result)
+    }
+
+    // ─── PR-07 regression anchors: per-script-type fee sizing ───
+
+    /**
+     * Anchors the H6 fix: BIP-44 inputs are ~148 vbytes each — over 2× a P2WPKH
+     * input. The pre-PR-07 selector hardcoded `inputCount * 68` and would have
+     * massively under-estimated the fee for a 5-input BIP-44 selection.
+     *
+     * Verifies the fee for a 5-input BIP-44 spend is roughly proportional to
+     * `5 * 148 * feeRate` rather than `5 * 68 * feeRate`.
+     */
+    @Test
+    fun bip44SelectionUsesP2pkhInputSize() {
+        // P2PKH-typed wallet + P2PKH UTXOs.
+        val p2pkhSelector = UnspentOutputSelector(walletScriptType = ScriptType.P2PKH)
+        val utxos = (0 until 5).map { createUtxo(20_000, scriptType = ScriptType.P2PKH) }
+        val feeRate = 10L
+        // Spend close to all of it so all 5 inputs are needed.
+        val result = p2pkhSelector.select(
+            utxos = utxos,
+            targetAmount = 90_000,
+            feeRate = feeRate,
+            destinationScriptType = ScriptType.P2PKH,
+        )
+        assertNotNull(result)
+        assertEquals(5, result.selectedUtxos.size, "needs all 5 inputs at this size")
+
+        // 5 * 148 (P2PKH inputs) + 2 * 34 (P2PKH outputs: destination + change) + 10 (header)
+        // = 740 + 68 + 10 = 818 vbytes. At feeRate=10 that's ~8180 sats.
+        // The old hardcoded `5 * 68 = 340`-based fee would have been ~3500 sats — wrong by ~2.3×.
+        val expectedFeeFloor = 5 * 148 * feeRate  // 7400 sats — lower bound, ignoring outputs+header
+        val expectedFeeCeiling = (5 * 148 + 2 * 34 + 10 + 8) * feeRate  // generous upper
+        assertTrue(
+            result.fee in expectedFeeFloor..expectedFeeCeiling,
+            "P2PKH fee should reflect 148 vB/input, got ${result.fee} sats (expected in $expectedFeeFloor..$expectedFeeCeiling)",
+        )
+    }
+
+    /**
+     * Anchors the H6 fix for P2WPKH: the previous code happened to match this
+     * scenario (both used 68 vB/input), so this verifies the new code didn't
+     * regress the previously-correct case.
+     */
+    @Test
+    fun bip84SelectionFeeStillReasonable() {
+        val utxos = (0 until 3).map { createUtxo(50_000, scriptType = ScriptType.P2WPKH) }
+        val feeRate = 10L
+        val result = selector.select(utxos, 80_000, feeRate, p2wpkhDestination)
+        assertNotNull(result)
+        // 2 inputs needed (50k+50k > 80k+fee), output 31 + change 31 + header 10 + witness overhead.
+        // Per-input vSize ≈ 68. So fee ≈ (2*68 + 31 + 31 + 10) * 10 ≈ 2080.
+        assertTrue(result.fee in 1500..2500, "P2WPKH fee out of expected band: ${result.fee}")
     }
 }

@@ -1,8 +1,10 @@
 package io.sourlabs.btc.wallet.utxo
 
 import io.sourlabs.btc.wallet.models.BalanceInfo
+import io.sourlabs.btc.wallet.models.ScriptType
 import io.sourlabs.btc.wallet.models.UnspentOutput
 import io.sourlabs.btc.wallet.storage.UnspentOutputStorage
+import io.sourlabs.btc.wallet.transactions.FeeCalculator
 
 /**
  * Provides access to unspent outputs and calculates balance.
@@ -59,25 +61,30 @@ class UnspentOutputProvider(
 
     /**
      * Calculate the maximum spendable amount after accounting for fees.
+     *
+     * Sizes each input against its own [ScriptType] (BIP-44 P2PKH inputs are
+     * ~148 vbytes; BIP-49 P2SH-P2WPKH ~91; BIP-84 P2WPKH ~68; BIP-86 P2TR ~58).
+     * The pre-PR-07 implementation hardcoded all inputs as 68 vbytes, which
+     * under-counted by ~50% for BIP-44 wallets.
+     *
      * @param feeRate fee rate in sat/vB
-     * @param outputScriptSize estimated size of the output script (default 34 for P2WPKH)
+     * @param destinationScriptType script type of the output the funds would
+     *   be sent to. Defaults to [ScriptType.P2WPKH]; pass the actual destination
+     *   type when known for a precise estimate.
      */
-    suspend fun getMaximumSpendable(feeRate: Long, outputScriptSize: Int = 34): Long {
+    suspend fun getMaximumSpendable(
+        feeRate: Long,
+        destinationScriptType: ScriptType = ScriptType.P2WPKH,
+    ): Long {
         val spendableUtxos = getSpendableUtxos()
         if (spendableUtxos.isEmpty()) return 0
 
         val totalValue = spendableUtxos.sumOf { it.value }
-
-        // Estimate transaction size
-        // Base size: version (4) + marker (1) + flag (1) + input count (1) + output count (1) + locktime (4) = 12
-        // Each input: ~68 vBytes for P2WPKH
-        // Single output: 8 (value) + 1 (script length) + script
-        val baseTxSize = 12
-        val inputSize = spendableUtxos.size * 68 // Approximate for segwit
-        val outputSize = 8 + 1 + outputScriptSize
-
-        val estimatedSize = baseTxSize + inputSize + outputSize
-        val estimatedFee = estimatedSize * feeRate
+        val estimatedFee = FeeCalculator.estimateFee(
+            inputs = spendableUtxos.map { it.scriptType },
+            outputs = listOf(destinationScriptType),
+            feeRateSatPerVb = feeRate,
+        )
 
         return maxOf(0, totalValue - estimatedFee)
     }
