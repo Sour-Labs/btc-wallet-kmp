@@ -75,10 +75,10 @@ val config = WalletConfig.FromMnemonic(
     gapLimit = 20
 )
 
-// 3. Build the wallet
-val wallet = BitcoinKit.builder(config)
-    .syncConfig(SyncConfig.BlockStream.forNetwork(Network.MAINNET))
-    .build()
+// 3. Build the wallet. The builder picks a sensible default sync source for
+//    the network (Blockstream for mainnet/testnet/signet, Mempool.space for
+//    Testnet4). Override with .syncConfig(...) when you want something else.
+val wallet = BitcoinKit.builder(config).build()
 
 // 4. Start the wallet (in a coroutine scope)
 coroutineScope.launch {
@@ -378,11 +378,11 @@ val wallet = BitcoinKit.builder(config)
 ## Sync Configuration
 
 ```kotlin
-// Mainnet (default)
+// Blockstream (mainnet / testnet / signet)
 val syncConfig = SyncConfig.BlockStream.forNetwork(Network.MAINNET)
 
-// Testnet
-val syncConfig = SyncConfig.BlockStream.forNetwork(Network.TESTNET)
+// Mempool.space (mainnet / testnet / testnet4 / signet)
+val syncConfig = SyncConfig.MempoolSpace.forNetwork(Network.TESTNET4)
 
 // Custom BlockStream instance
 val syncConfig = SyncConfig.BlockStream(
@@ -390,11 +390,15 @@ val syncConfig = SyncConfig.BlockStream(
     pollingIntervalMs = 30_000
 )
 
-// Custom API endpoint
+// Custom API endpoint (regtest, self-hosted Esplora, etc.)
 val syncConfig = SyncConfig.CustomApi(
     baseUrl = "https://my-api.com",
     pollingIntervalMs = 60_000
 )
+
+// Smart default per network — what BitcoinKit.builder uses when no
+// .syncConfig() is supplied.
+val syncConfig = SyncConfig.defaultForNetwork(Network.TESTNET4)
 ```
 
 ### Blockstream Explorer Enterprise (paid tier)
@@ -412,8 +416,12 @@ val syncConfig = SyncConfig.BlockStream.enterprise(
 )
 ```
 
-Enterprise only serves mainnet and testnet. `SIGNET` and `REGTEST` fall back to the public
-unauthenticated endpoints automatically.
+Enterprise only serves mainnet and testnet:
+ - `SIGNET` falls back to Blockstream's free public Signet endpoint (no auth).
+ - `REGTEST` and `TESTNET4` throw `IllegalArgumentException` — Blockstream has
+   no endpoint for either. For Testnet4 use `SyncConfig.MempoolSpace.forNetwork(Network.TESTNET4)`;
+   for regtest construct `SyncConfig.BlockStream(baseUrl = ...)` or
+   `SyncConfig.CustomApi(...)` explicitly.
 
 > **Never ship `clientSecret` inside a distributed client binary.** A secret bundled into an
 > Android APK, iOS IPA, or desktop build is not secret — anyone who downloads the binary can
@@ -490,12 +498,18 @@ try {
     wallet.send(...)
 } catch (e: InvalidAddressException) {
     // Invalid destination address
+} catch (e: InvalidAmountException) {
+    // Amount is non-positive, below the destination's dust threshold,
+    // or feeRate is below 1 sat/vB
 } catch (e: InsufficientFundsException) {
     // Not enough balance
 } catch (e: SigningException) {
     // Watch-only wallet or signing failed
 } catch (e: BroadcastException) {
     // Network broadcast failed
+} catch (e: ScanException) {
+    // Wallet restoration scan aborted after too many consecutive API failures
+    // (only thrown by BitcoinKit.scanWallet / MultiPurposeScanner)
 } catch (e: WalletException) {
     // General wallet error
 }
@@ -536,7 +550,7 @@ The main facade class. Key properties and methods:
 | `syncState` | StateFlow of sync state |
 | `events` | SharedFlow of wallet events |
 | `start()` | Initialize and start syncing. Suspends until first sync finishes (Synced or Error). |
-| `stop()` | Stop sync operations |
+| `stop()` | Stop sync operations. Suspends until the sync coroutine has actually exited. |
 | `refresh()` | Manually trigger sync |
 | `receiveAddress()` | Get fresh receive address |
 | `getBalance()` | Get current balance |
