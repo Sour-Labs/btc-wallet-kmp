@@ -5,6 +5,7 @@ import io.sourlabs.btc.wallet.core.SyncConfig
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
 import io.sourlabs.btc.wallet.models.*
+import io.sourlabs.btc.wallet.models.confirmations
 import io.sourlabs.btc.wallet.storage.BlockInfoStorage
 import io.sourlabs.btc.wallet.storage.TransactionStorage
 import io.sourlabs.btc.wallet.storage.UnspentOutputStorage
@@ -440,7 +441,7 @@ class SyncManager(
         } else {
             emptyList()
         }
-        processor.processUtxos(address, utxos, key.path, key.scriptType, blockHeight)
+        processor.processUtxos(address, utxos, key.path, key.scriptType)
 
         val allNewTxs = newConfirmed + mempoolTxs
         if (allNewTxs.isNotEmpty()) {
@@ -537,6 +538,7 @@ class SyncManager(
 
     private suspend fun calculateBalance(): BalanceInfo {
         val utxos = utxoStorage.getAllUtxos()
+        val tip = blockInfoStorage.getLastBlockInfo()?.height
 
         var spendable = 0L
         var unconfirmed = 0L
@@ -545,7 +547,7 @@ class SyncManager(
         for (utxo in utxos) {
             when {
                 !utxo.isSpendable -> locked += utxo.value
-                utxo.confirmations < 1 -> unconfirmed += utxo.value
+                utxo.confirmations(tip) < 1 -> unconfirmed += utxo.value
                 else -> spendable += utxo.value
             }
         }

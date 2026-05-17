@@ -23,7 +23,7 @@ class UnspentOutputSelectorTest {
 
     private fun createUtxo(
         value: Long,
-        confirmations: Int = 6,
+        blockHeight: Int? = 100,
         scriptType: ScriptType = ScriptType.P2WPKH,
     ): UnspentOutput {
         return UnspentOutput(
@@ -32,9 +32,8 @@ class UnspentOutputSelectorTest {
             value = value,
             scriptPubKey = ByteArray(22),
             scriptType = scriptType,
-            confirmations = confirmations,
             publicKeyPath = "m/84'/0'/0'/0/0",
-            blockHeight = 100,
+            blockHeight = blockHeight,
             isSpendable = true
         )
     }

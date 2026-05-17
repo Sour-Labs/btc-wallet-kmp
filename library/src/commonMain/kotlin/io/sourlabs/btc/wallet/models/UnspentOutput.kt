@@ -9,6 +9,11 @@ import fr.acinq.bitcoin.TxOut
 
 /**
  * An unspent transaction output (UTXO) that can be used as an input.
+ *
+ * Note: confirmations are *not* stored — they're derived on read from the
+ * current chain tip height via [confirmations]. Storing a snapshot would go
+ * stale the instant a new block lands, so any consumer that needs the count
+ * looks it up against the live tip instead.
  */
 data class UnspentOutput(
     /**
@@ -37,11 +42,6 @@ data class UnspentOutput(
     val scriptType: ScriptType,
 
     /**
-     * Number of confirmations.
-     */
-    val confirmations: Int,
-
-    /**
      * The derivation path of the key that controls this output.
      */
     val publicKeyPath: String,
@@ -52,8 +52,11 @@ data class UnspentOutput(
     val blockHeight: Int? = null,
 
     /**
-     * Whether this output is currently spendable.
-     * May be false due to insufficient confirmations, timelocks, or other locks.
+     * Whether this output is currently spendable. Independent of the
+     * confirmation count — set to false for time-locked outputs, manually
+     * locked UTXOs, or anything else that should prevent spending. The
+     * confirmation-threshold check is applied separately by
+     * [io.sourlabs.btc.wallet.utxo.UnspentOutputProvider].
      */
     val isSpendable: Boolean = true
 ) {
@@ -84,7 +87,6 @@ data class UnspentOutput(
         if (value != other.value) return false
         if (!scriptPubKey.contentEquals(other.scriptPubKey)) return false
         if (scriptType != other.scriptType) return false
-        if (confirmations != other.confirmations) return false
         if (publicKeyPath != other.publicKeyPath) return false
         if (blockHeight != other.blockHeight) return false
         if (isSpendable != other.isSpendable) return false
@@ -98,10 +100,22 @@ data class UnspentOutput(
         result = 31 * result + value.hashCode()
         result = 31 * result + scriptPubKey.contentHashCode()
         result = 31 * result + scriptType.hashCode()
-        result = 31 * result + confirmations
         result = 31 * result + publicKeyPath.hashCode()
         result = 31 * result + (blockHeight ?: 0)
         result = 31 * result + isSpendable.hashCode()
         return result
     }
+}
+
+/**
+ * Confirmations for this UTXO computed against the given chain tip. An
+ * unconfirmed (mempool) output or one without a known tip returns 0. The
+ * formula is `tipHeight - blockHeight + 1`, so a UTXO that lands in block N
+ * has 1 confirmation as soon as the tip is at N — matches Bitcoin Core's
+ * `Confirmations` field.
+ */
+fun UnspentOutput.confirmations(tipHeight: Int?): Int {
+    val confirmedAt = blockHeight ?: return 0
+    val tip = tipHeight ?: return 0
+    return (tip - confirmedAt + 1).coerceAtLeast(0)
 }

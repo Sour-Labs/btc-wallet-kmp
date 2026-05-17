@@ -87,7 +87,6 @@ class InMemoryWalletStorageConcurrencyTest {
                 value = 1_000_000L,
                 scriptPubKey = converter.createScriptPubKey(pk, ScriptType.P2WPKH),
                 scriptType = ScriptType.P2WPKH,
-                confirmations = 6,
                 publicKeyPath = hd.getDerivationPath(true, i % 20),
                 blockHeight = 100,
                 isSpendable = true,

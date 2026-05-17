@@ -367,6 +367,7 @@ class BitcoinKit private constructor(
             )
             val utxoProvider = UnspentOutputProvider(
                 storage = storage.unspentOutputStorage,
+                blockInfoStorage = storage.blockInfoStorage,
                 confirmationsThreshold = walletConfig.confirmationsThreshold
             )
             val transactionCreator = TransactionCreator(
