@@ -36,4 +36,26 @@ class SyncConfigTest {
         val config = SyncConfig.BlockStream.forNetwork(Network.MAINNET)
         assertEquals(SyncConfig.BlockStream.DEFAULT_MAINNET_URL, config.baseUrl)
     }
+
+    @Test
+    fun mempoolSpaceForNetworkTestnet4ReturnsTestnet4Endpoint() {
+        val config = SyncConfig.MempoolSpace.forNetwork(Network.TESTNET4)
+        assertEquals(SyncConfig.MempoolSpace.DEFAULT_TESTNET4_URL, config.baseUrl)
+    }
+
+    @Test
+    fun blockStreamForNetworkTestnet4Throws() {
+        // Blockstream doesn't serve Testnet4 — callers must use MempoolSpace or
+        // an explicit baseUrl.
+        assertFailsWith<IllegalArgumentException> {
+            SyncConfig.BlockStream.forNetwork(Network.TESTNET4)
+        }
+    }
+
+    @Test
+    fun blockStreamEnterpriseTestnet4Throws() {
+        assertFailsWith<IllegalArgumentException> {
+            SyncConfig.BlockStream.enterprise(Network.TESTNET4, "client-id", "secret")
+        }
+    }
 }

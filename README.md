@@ -166,7 +166,8 @@ val config = WalletConfig.WatchOnly(
 | Network | Description |
 |---------|-------------|
 | `Network.MAINNET` | Bitcoin mainnet |
-| `Network.TESTNET` | Bitcoin testnet |
+| `Network.TESTNET` | Bitcoin testnet (Testnet3) |
+| `Network.TESTNET4` | Bitcoin Testnet4 (replaces Testnet3; served by Mempool.space, not Blockstream) |
 | `Network.SIGNET` | Bitcoin signet |
 | `Network.REGTEST` | Local regtest |
 
