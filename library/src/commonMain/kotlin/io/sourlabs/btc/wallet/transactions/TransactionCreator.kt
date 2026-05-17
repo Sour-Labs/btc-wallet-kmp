@@ -136,6 +136,12 @@ class TransactionCreator(
      * subsequent `create*` call in the same process doesn't re-select the same UTXOs
      * or reuse the same change address.
      *
+     * The [changeKey] must be the exact key the builder allocated for this tx's
+     * change output (or null for a sweep / no-change build). Don't re-derive it from
+     * the unused-key pool here — marking input keys used between build time and now
+     * could shift "lowest unused internal key" away from the one the builder picked,
+     * and the cost of getting that wrong is silently marking the wrong key used.
+     *
      * If the caller never actually broadcasts the resulting transaction, the next
      * full sync will reconcile by re-adding the unspent outputs and the `PENDING`
      * entry stays dangling until explicitly cleared. That's the documented trade-off
@@ -146,28 +152,12 @@ class TransactionCreator(
         unsignedTx: UnsignedTransaction,
         signedTx: Transaction,
         fee: Long,
+        changeKey: WalletPublicKey?,
     ) {
         for (key in unsignedTx.publicKeys.distinctBy { it.path }) {
             publicKeyManager.markAsUsed(key.path)
         }
-        if (unsignedTx.hasChange && unsignedTx.changeOutputIndex != null) {
-            // The change key is the public key that controls the change output; it was
-            // freshly allocated by getChangePublicKey() and isn't in publicKeys.
-            val changeScript = signedTx.txOut[unsignedTx.changeOutputIndex].publicKeyScript
-            // Reverse-lookup the change key from the path used by the builder.
-            // The builder picked it from publicKeyManager.getChangePublicKey(), so it's
-            // the lowest-index unused internal key at build time — find it the same way.
-            val changeKey = publicKeyManager.getInternalPublicKeys()
-                .filter { !it.isUsed }
-                .minByOrNull { it.index }
-            changeKey?.let { publicKeyManager.markAsUsed(it.path) }
-            // Defensive: ensure we did identify the right key. Mismatch would mean the
-            // gap-fill state shifted unexpectedly between build and bookkeeping.
-            check(changeKey == null || addressConverter.createScriptPubKey(changeKey.publicKey, changeKey.scriptType)
-                .contentEquals(changeScript.toByteArray())) {
-                "Change key reconciliation mismatch — internal storage state shifted between build and record"
-            }
-        }
+        changeKey?.let { publicKeyManager.markAsUsed(it.path) }
         unspentOutputStorage.deleteUtxos(unsignedTx.utxos.map { it.id })
 
         val inputAmount = unsignedTx.utxos.sumOf { it.value }
@@ -282,7 +272,7 @@ class TransactionCreator(
         // Reserve UTXOs, mark keys used, and persist PENDING tx so a subsequent
         // create*() call in the same process doesn't re-select the same UTXOs
         // or hand out the same change address.
-        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee)
+        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee, changeKey)
 
         // Serialize
         val rawTx = Transaction.write(signedTx)
@@ -346,7 +336,7 @@ class TransactionCreator(
         // Sign transaction
         val signedTx = signer.sign(unsignedTx)
 
-        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee)
+        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee, changeKey)
 
         // Serialize
         val rawTx = Transaction.write(signedTx)
@@ -393,7 +383,8 @@ class TransactionCreator(
         // Sign transaction
         val signedTx = signer.sign(unsignedTx)
 
-        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee)
+        // Sweep has no change output, hence no change key to mark used.
+        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee, changeKey = null)
 
         // Serialize
         val rawTx = Transaction.write(signedTx)
