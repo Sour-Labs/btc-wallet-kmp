@@ -96,10 +96,16 @@ sealed class WalletConfig {
     }
 
     /**
-     * Create a wallet from an extended private key (xprv/yprv/zprv/tprv).
+     * Create a wallet from an *account-level* extended private key — a BIP-32
+     * key at `m/purpose'/coin'/account'` (depth 3), e.g. `xprv9z...` exported
+     * by a hardware wallet for the account you want this kit to manage.
+     *
+     * Master xprv keys (depth 0) are rejected at construction time. If you
+     * only have the master xprv, derive the account key yourself first via
+     * `DeterministicWallet.derivePrivateKey(master, "m/84'/0'/0'")`.
      */
     data class FromExtendedPrivateKey(
-        val extendedKey: String,
+        val accountExtendedPrivateKey: String,
         override val purpose: Purpose = Purpose.BIP84,
         override val network: Network = Network.MAINNET,
         override val account: Int = 0,
