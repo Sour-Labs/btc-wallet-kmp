@@ -243,35 +243,44 @@ class TransactionProcessor(
         )
     }
 
-    private suspend fun findWalletKey(scriptPubKey: ByteArray, scriptType: ScriptType): WalletPublicKey? {
-        val pubKeyHash = extractPubKeyHash(scriptPubKey, scriptType)
-        return if (pubKeyHash != null) {
-            publicKeyManager.findByPublicKeyHash(pubKeyHash)
-        } else {
-            findByScriptPubKey(scriptPubKey)
+    /**
+     * Hex-keyed lookup tables built lazily from the wallet's keys the first time
+     * a lookup is needed in this processor. Each [TransactionProcessor] handles
+     * one address, so the indices stay fresh for the lifetime of one
+     * [processTransactions] / [processUtxos] call — by the time the next address
+     * is synced, the next processor is built and re-reads the key set.
+     *
+     * Pre-PR-10: every vin/vout lookup either linear-scanned the wallet's keys by
+     * pubkey-hash (O(N) per call) or recomputed every key's scriptPubKey to
+     * compare bytes (O(N) script derivations per call). For a wallet with K
+     * keys processing T txs with V vins+vouts each, the old code did K·T·V
+     * derivations per address. The new code does K script derivations *once*
+     * for the index and then K-keyed lookups.
+     */
+    private var walletKeysByPubKeyHash: Map<String, WalletPublicKey>? = null
+    private var walletKeysByScriptPubKey: Map<String, WalletPublicKey>? = null
+
+    private suspend fun ensureKeyIndices() {
+        if (walletKeysByPubKeyHash != null) return
+        val keys = publicKeyManager.getAllPublicKeys()
+        walletKeysByPubKeyHash = keys.associateBy { it.publicKeyHash.toHexKey() }
+        walletKeysByScriptPubKey = keys.associateBy {
+            addressConverter.createScriptPubKey(it.publicKey, it.scriptType).toHexKey()
         }
     }
 
-    /**
-     * Match a scriptPubKey against every wallet key by recomputing each key's
-     * scriptPubKey. Used for outputs where [extractPubKeyHash] can't yield a
-     * direct hash160 — P2SH-wrapping types and P2TR. The scriptType isn't a
-     * filter here because a parsed-as-[ScriptType.P2SH] external scriptPubKey
-     * may still match a wallet key tagged [ScriptType.P2SH_P2WPKH] (the wallet
-     * generates the latter but the parser can't tell from the bytes alone).
-     *
-     * Linear in the wallet's key count — PR-10 of the OSS readiness audit
-     * replaces this with a hash-lookup index.
-     */
-    private suspend fun findByScriptPubKey(scriptPubKey: ByteArray): WalletPublicKey? {
-        val keys = publicKeyManager.getAllPublicKeys()
-        for (key in keys) {
-            val keyScriptPubKey = addressConverter.createScriptPubKey(key.publicKey, key.scriptType)
-            if (keyScriptPubKey.contentEquals(scriptPubKey)) {
-                return key
-            }
+    private suspend fun findWalletKey(scriptPubKey: ByteArray, scriptType: ScriptType): WalletPublicKey? {
+        ensureKeyIndices()
+        val pubKeyHash = extractPubKeyHash(scriptPubKey, scriptType)
+        if (pubKeyHash != null) {
+            // P2PKH and P2WPKH put the hash160 of the pubkey directly in the
+            // scriptPubKey, so the index is keyed on that hash.
+            walletKeysByPubKeyHash!![pubKeyHash.toHexKey()]?.let { return it }
         }
-        return null
+        // P2SH variants and P2TR don't expose a pubkey hash in their scriptPubKey;
+        // fall back to a direct scriptPubKey-bytes match. Also acts as the
+        // catch-all for any future script type the extractor doesn't know yet.
+        return walletKeysByScriptPubKey!![scriptPubKey.toHexKey()]
     }
 
     /**
@@ -296,4 +305,11 @@ class TransactionProcessor(
         }
     }
 
+    private fun ByteArray.toHexKey(): String = buildString(size * 2) {
+        for (byte in this@toHexKey) {
+            val v = byte.toInt() and 0xff
+            if (v < 0x10) append('0')
+            append(v.toString(16))
+        }
+    }
 }
