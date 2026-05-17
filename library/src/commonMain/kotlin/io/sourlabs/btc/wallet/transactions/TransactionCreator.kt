@@ -4,8 +4,13 @@ import fr.acinq.bitcoin.Transaction
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
+import io.sourlabs.btc.wallet.models.TransactionStatus
+import io.sourlabs.btc.wallet.models.TransactionType
 import io.sourlabs.btc.wallet.models.UnspentOutput
 import io.sourlabs.btc.wallet.models.WalletPublicKey
+import io.sourlabs.btc.wallet.models.WalletTransaction
+import io.sourlabs.btc.wallet.storage.TransactionStorage
+import io.sourlabs.btc.wallet.storage.UnspentOutputStorage
 import io.sourlabs.btc.wallet.utxo.SelectionStrategy
 import io.sourlabs.btc.wallet.utxo.UnspentOutputProvider
 import io.sourlabs.btc.wallet.utxo.UnspentOutputSelector
@@ -112,7 +117,9 @@ class TransactionCreator(
     private val hdWalletManager: HDWalletManager,
     private val publicKeyManager: PublicKeyManager,
     private val utxoProvider: UnspentOutputProvider,
-    private val addressConverter: AddressConverter
+    private val addressConverter: AddressConverter,
+    private val transactionStorage: TransactionStorage,
+    private val unspentOutputStorage: UnspentOutputStorage,
 ) {
     private val selector = UnspentOutputSelector()
     private val builder = TransactionBuilder(addressConverter)
@@ -120,6 +127,66 @@ class TransactionCreator(
         TransactionSigner(hdWalletManager)
     } else {
         null
+    }
+
+    /**
+     * Reserve the spent UTXOs locally, mark input/change keys as used, and persist a
+     * `PENDING` [WalletTransaction] so the wallet immediately reflects the just-built
+     * transaction. Called from each `create*` path after a successful sign, so a
+     * subsequent `create*` call in the same process doesn't re-select the same UTXOs
+     * or reuse the same change address.
+     *
+     * The [changeKey] must be the exact key the builder allocated for this tx's
+     * change output (or null for a sweep / no-change build). Don't re-derive it from
+     * the unused-key pool here — marking input keys used between build time and now
+     * could shift "lowest unused internal key" away from the one the builder picked,
+     * and the cost of getting that wrong is silently marking the wrong key used.
+     *
+     * If the caller never actually broadcasts the resulting transaction, the next
+     * full sync will reconcile by re-adding the unspent outputs and the `PENDING`
+     * entry stays dangling until explicitly cleared. That's the documented trade-off
+     * for keeping `createTransaction()` side-effecting; see PR-02 of the OSS readiness
+     * audit for the rationale.
+     */
+    private suspend fun recordOutgoingTransaction(
+        unsignedTx: UnsignedTransaction,
+        signedTx: Transaction,
+        fee: Long,
+        changeKey: WalletPublicKey?,
+    ) {
+        for (key in unsignedTx.publicKeys.distinctBy { it.path }) {
+            publicKeyManager.markAsUsed(key.path)
+        }
+        changeKey?.let { publicKeyManager.markAsUsed(it.path) }
+        unspentOutputStorage.deleteUtxos(unsignedTx.utxos.map { it.id })
+
+        val inputAmount = unsignedTx.utxos.sumOf { it.value }
+        // Sum every output paying to one of our scriptPubKeys, not just the change
+        // output: covers the self-send / consolidation case where the destination
+        // address is also one of ours. Without this, a self-send's persisted
+        // `amount` is `-(destination + fee)` instead of the correct `-fee`, and
+        // the sync's "skip if txid exists" path in TransactionProcessor never
+        // gets a chance to fix it.
+        val walletScripts: List<ByteArray> = publicKeyManager.getAllPublicKeys()
+            .map { addressConverter.createScriptPubKey(it.publicKey, it.scriptType) }
+        val outputAmount = signedTx.txOut.sumOf { out ->
+            val outScript = out.publicKeyScript.toByteArray()
+            if (walletScripts.any { it.contentEquals(outScript) }) out.amount.toLong() else 0L
+        }
+        val netAmount = outputAmount - inputAmount
+
+        transactionStorage.saveTransaction(
+            WalletTransaction(
+                txId = signedTx.txid.toString(),
+                transaction = signedTx,
+                blockHeight = null,
+                timestamp = null,
+                status = TransactionStatus.PENDING,
+                type = TransactionType.OUTGOING,
+                amount = netAmount,
+                fee = fee,
+            )
+        )
     }
 
     /**
@@ -209,6 +276,11 @@ class TransactionCreator(
         // Sign transaction
         val signedTx = signer.sign(unsignedTx)
 
+        // Reserve UTXOs, mark keys used, and persist PENDING tx so a subsequent
+        // create*() call in the same process doesn't re-select the same UTXOs
+        // or hand out the same change address.
+        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee, changeKey)
+
         // Serialize
         val rawTx = Transaction.write(signedTx)
 
@@ -271,6 +343,8 @@ class TransactionCreator(
         // Sign transaction
         val signedTx = signer.sign(unsignedTx)
 
+        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee, changeKey)
+
         // Serialize
         val rawTx = Transaction.write(signedTx)
 
@@ -315,6 +389,9 @@ class TransactionCreator(
 
         // Sign transaction
         val signedTx = signer.sign(unsignedTx)
+
+        // Sweep has no change output, hence no change key to mark used.
+        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee, changeKey = null)
 
         // Serialize
         val rawTx = Transaction.write(signedTx)

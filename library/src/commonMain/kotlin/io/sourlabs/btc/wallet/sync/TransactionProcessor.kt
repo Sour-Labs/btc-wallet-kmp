@@ -289,37 +289,4 @@ class TransactionProcessor(
         }
     }
 
-    /**
-     * Mark addresses as used based on transaction history.
-     */
-    suspend fun markAddressesUsed(transactions: List<ApiTransaction>) {
-        val usedHashes = mutableListOf<ByteArray>()
-        val usedPaths = mutableSetOf<String>()
-
-        for (tx in transactions) {
-            // Check outputs
-            for (vout in tx.vout) {
-                val address = vout.scriptPubKeyAddress ?: continue
-                val addressInfo = addressConverter.parseAddress(address) ?: continue
-                val key = findWalletKey(addressInfo.scriptPubKey, addressInfo.scriptType) ?: continue
-                if (usedPaths.add(key.path)) {
-                    usedHashes.add(key.publicKeyHash)
-                }
-            }
-
-            // Check inputs
-            for (vin in tx.vin) {
-                val prevAddress = vin.prevout?.scriptPubKeyAddress ?: continue
-                val addressInfo = addressConverter.parseAddress(prevAddress) ?: continue
-                val key = findWalletKey(addressInfo.scriptPubKey, addressInfo.scriptType) ?: continue
-                if (usedPaths.add(key.path)) {
-                    usedHashes.add(key.publicKeyHash)
-                }
-            }
-        }
-
-        if (usedHashes.isNotEmpty()) {
-            publicKeyManager.markAsUsedByHashes(usedHashes)
-        }
-    }
 }

@@ -103,25 +103,6 @@ class PublicKeyManager(
     }
 
     /**
-     * Mark keys as used by their public key hashes.
-     */
-    suspend fun markAsUsedByHashes(hashes: List<ByteArray>) {
-        var externalChanged = false
-        var internalChanged = false
-
-        for (hash in hashes) {
-            val key = storage.findByPublicKeyHash(hash)
-            if (key != null && !key.isUsed) {
-                storage.markAsUsed(key.path)
-                if (key.isExternal) externalChanged = true else internalChanged = true
-            }
-        }
-
-        if (externalChanged) fillGap(isExternal = true)
-        if (internalChanged) fillGap(isExternal = false)
-    }
-
-    /**
      * Get the count of unused keys in a chain.
      */
     suspend fun unusedKeyCount(isExternal: Boolean): Int {
