@@ -24,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 
 private val log = Logger.withTag("BitcoinKit")
 
@@ -71,14 +72,28 @@ class BitcoinKit private constructor(
     /**
      * Start the wallet (initialize keys and begin syncing).
      *
-     * See [SyncMode] for per-mode behavior and preconditions.
-     * Defaults to [SyncMode.Continuous] (full sync then polling) for
-     * source compatibility with earlier versions.
+     * Suspends until the first sync attempt has finished — `syncState` is
+     * either [SyncState.Synced] or [SyncState.Error] by the time `start()`
+     * returns. This lets callers immediately use [getBalance], [transactions],
+     * or [receiveAddress] without manually observing the sync state flow.
+     *
+     * For [SyncMode.OneShot] / [SyncMode.Continuous] the await covers the
+     * full initial scan (and any fallback attempts) before yielding. For
+     * [SyncMode.IncrementalOnly] the kit flips to Synced immediately, so
+     * `start()` returns almost instantly.
+     *
+     * See [SyncMode] for per-mode behavior and preconditions. Defaults to
+     * [SyncMode.Continuous] (full sync then polling) for source compatibility
+     * with earlier versions.
      */
     suspend fun start(mode: SyncMode = SyncMode.Continuous) {
         log.i { "start(mode=$mode, network=$network, purpose=$purpose, watchOnly=$isWatchOnly)" }
         publicKeyManager.initialize()
         syncManager.start(scope, mode)
+        // Wait for the launched sync coroutine to reach a terminal state.
+        // syncState starts at NotSynced and transitions through Syncing to
+        // Synced or Error; we wait for the first terminal emission.
+        syncState.first { it is SyncState.Synced || it is SyncState.Error }
     }
 
     /**

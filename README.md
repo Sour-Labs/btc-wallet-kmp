@@ -463,13 +463,17 @@ val scanResult = BitcoinKit.scanWallet(
 ## Lifecycle Management
 
 ```kotlin
-// Start wallet (initializes keys, starts sync)
+// Start wallet (initializes keys, starts sync). Suspends until the first
+// sync attempt has finished — syncState is Synced or Error by the time
+// start() returns. So you can immediately use getBalance() / transactions()
+// / receiveAddress() without observing syncState yourself.
 wallet.start()
 
 // Manual refresh
 wallet.refresh()
 
-// Stop sync operations
+// Stop sync operations. Suspends until the sync coroutine has actually
+// exited, so subsequent state mutations (clearData) don't race.
 wallet.stop()
 
 // Clear all wallet data
@@ -509,7 +513,7 @@ The main facade class. Key properties and methods:
 | `isWatchOnly` | Whether wallet can sign transactions |
 | `syncState` | StateFlow of sync state |
 | `events` | SharedFlow of wallet events |
-| `start()` | Initialize and start syncing |
+| `start()` | Initialize and start syncing. Suspends until first sync finishes (Synced or Error). |
 | `stop()` | Stop sync operations |
 | `refresh()` | Manually trigger sync |
 | `receiveAddress()` | Get fresh receive address |
