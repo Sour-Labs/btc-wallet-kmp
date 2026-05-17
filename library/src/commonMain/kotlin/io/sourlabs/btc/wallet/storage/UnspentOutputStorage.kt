@@ -37,11 +37,6 @@ interface UnspentOutputStorage {
     suspend fun getUtxosForKey(publicKeyPath: String): List<UnspentOutput>
 
     /**
-     * Update UTXO confirmation count.
-     */
-    suspend fun updateConfirmations(id: String, confirmations: Int, blockHeight: Int?)
-
-    /**
      * Update UTXO spendability.
      */
     suspend fun updateSpendability(id: String, isSpendable: Boolean)

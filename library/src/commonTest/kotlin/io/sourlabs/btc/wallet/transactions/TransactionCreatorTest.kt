@@ -6,6 +6,7 @@ import io.sourlabs.btc.wallet.api.InvalidAmountException
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
+import io.sourlabs.btc.wallet.models.BlockInfo
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
 import io.sourlabs.btc.wallet.models.TransactionStatus
@@ -38,12 +39,22 @@ class TransactionCreatorTest {
     // A well-known external (non-wallet) destination from the BIP-173 test vectors.
     private val externalDestination = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
 
-    private fun newFixture(): Fixture {
+    private suspend fun newFixture(): Fixture {
         val hd = HDWalletManager.fromMnemonic(testMnemonic, "", Purpose.BIP84, Network.MAINNET)
         val converter = AddressConverter(Network.MAINNET)
         val storage = InMemoryWalletStorage()
+        // Test UTXOs are stamped with blockHeight = 100; seeding the tip at 110
+        // gives them 11 confirmations — well above the threshold so they're
+        // selectable. PR-09 changed confirmations to be derived from the tip
+        // rather than stored on each UTXO, so this seeding step replaces the
+        // old "confirmations = 6" field on test fixtures.
+        storage.blockInfoStorage.saveBlockInfo(BlockInfo(height = 110, hash = "h", timestamp = 0))
         val pkm = PublicKeyManager(hd, storage.publicKeyStorage, gapLimit = 20)
-        val provider = UnspentOutputProvider(storage.unspentOutputStorage, confirmationsThreshold = 1)
+        val provider = UnspentOutputProvider(
+            storage = storage.unspentOutputStorage,
+            blockInfoStorage = storage.blockInfoStorage,
+            confirmationsThreshold = 1,
+        )
         val creator = TransactionCreator(
             hdWalletManager = hd,
             publicKeyManager = pkm,
@@ -76,7 +87,6 @@ class TransactionCreatorTest {
             value = value,
             scriptPubKey = converter.createScriptPubKey(key.publicKey, key.scriptType),
             scriptType = key.scriptType,
-            confirmations = 6,
             publicKeyPath = key.path,
             blockHeight = 100,
             isSpendable = true,

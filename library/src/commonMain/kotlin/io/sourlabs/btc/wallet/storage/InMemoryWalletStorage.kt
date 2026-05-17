@@ -177,12 +177,6 @@ private class InMemoryUnspentOutputStorage : UnspentOutputStorage {
         utxos.values.filter { it.publicKeyPath == publicKeyPath }
     }
 
-    override suspend fun updateConfirmations(id: String, confirmations: Int, blockHeight: Int?): Unit = mutex.withLock {
-        utxos[id]?.let { utxo ->
-            utxos[id] = utxo.copy(confirmations = confirmations, blockHeight = blockHeight)
-        }
-    }
-
     override suspend fun updateSpendability(id: String, isSpendable: Boolean): Unit = mutex.withLock {
         utxos[id]?.let { utxo ->
             utxos[id] = utxo.copy(isSpendable = isSpendable)

@@ -45,7 +45,6 @@ class TransactionBuilderTest {
             value = value,
             scriptPubKey = ByteArray(22),
             scriptType = ScriptType.P2WPKH,
-            confirmations = 6,
             publicKeyPath = wallet.getDerivationPath(true, 0),
             blockHeight = 100,
             isSpendable = true

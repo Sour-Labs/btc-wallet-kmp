@@ -108,7 +108,8 @@ class UnspentOutputSelector(
 
         val sortedUtxos = when (strategy) {
             SelectionStrategy.AUTOMATIC -> utxos.sortedByDescending { it.value }
-            SelectionStrategy.OLDEST_FIRST -> utxos.sortedBy { it.confirmations }.reversed()
+            // Lower blockHeight = older. Unconfirmed UTXOs (no blockHeight) sort last.
+            SelectionStrategy.OLDEST_FIRST -> utxos.sortedBy { it.blockHeight ?: Int.MAX_VALUE }
             SelectionStrategy.LARGEST_FIRST -> utxos.sortedByDescending { it.value }
             SelectionStrategy.SMALLEST_FIRST -> utxos.sortedBy { it.value }
             SelectionStrategy.PRIVACY_OPTIMIZED -> selectForPrivacy(utxos, targetAmount, feeRate, destinationScriptType)

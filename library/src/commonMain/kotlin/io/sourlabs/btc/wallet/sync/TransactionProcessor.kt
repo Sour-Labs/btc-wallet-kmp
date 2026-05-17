@@ -55,7 +55,6 @@ class TransactionProcessor(
         utxos: List<ApiUtxo>,
         publicKeyPath: String,
         scriptType: ScriptType,
-        currentBlockHeight: Int
     ): List<UnspentOutput> {
         val processedUtxos = mutableListOf<UnspentOutput>()
 
@@ -70,14 +69,9 @@ class TransactionProcessor(
             }
         }
 
-        // Add/update UTXOs
+        // Add/update UTXOs. Confirmation counts aren't stored — they're computed
+        // on read from the current chain tip via UnspentOutput.confirmations().
         for (apiUtxo in utxos) {
-            val confirmations = if (apiUtxo.status.confirmed && apiUtxo.status.blockHeight != null) {
-                currentBlockHeight - apiUtxo.status.blockHeight + 1
-            } else {
-                0
-            }
-
             val scriptPubKey = addressConverter.addressToScriptPubKey(address)
                 ?: continue
 
@@ -87,7 +81,6 @@ class TransactionProcessor(
                 value = apiUtxo.value,
                 scriptPubKey = scriptPubKey,
                 scriptType = scriptType,
-                confirmations = confirmations,
                 publicKeyPath = publicKeyPath,
                 blockHeight = apiUtxo.status.blockHeight,
                 isSpendable = true
