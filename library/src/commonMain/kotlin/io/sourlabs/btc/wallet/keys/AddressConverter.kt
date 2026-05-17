@@ -8,8 +8,11 @@ import io.sourlabs.btc.wallet.models.WalletPublicKey
 
 /**
  * Converts public keys to addresses for all supported script types.
+ *
+ * Open so that focused tests (e.g. counting scriptPubKey derivations during
+ * sync) can subclass with overridden methods rather than introducing a wrapper.
  */
-class AddressConverter(
+open class AddressConverter(
     private val network: Network
 ) {
     private val chain: Chain = network.toChain()
@@ -138,7 +141,7 @@ class AddressConverter(
     /**
      * Create the scriptPubKey for a given public key and script type.
      */
-    fun createScriptPubKey(publicKey: PublicKey, scriptType: ScriptType): ByteArray {
+    open fun createScriptPubKey(publicKey: PublicKey, scriptType: ScriptType): ByteArray {
         val script = when (scriptType) {
             ScriptType.P2PKH -> Script.pay2pkh(publicKey)
             ScriptType.P2SH_P2WPKH -> {
