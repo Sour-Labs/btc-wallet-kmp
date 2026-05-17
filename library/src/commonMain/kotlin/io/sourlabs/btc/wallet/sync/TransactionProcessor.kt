@@ -255,14 +255,24 @@ class TransactionProcessor(
         return if (pubKeyHash != null) {
             publicKeyManager.findByPublicKeyHash(pubKeyHash)
         } else {
-            findByScriptPubKey(scriptPubKey, scriptType)
+            findByScriptPubKey(scriptPubKey)
         }
     }
 
-    private suspend fun findByScriptPubKey(scriptPubKey: ByteArray, scriptType: ScriptType): WalletPublicKey? {
+    /**
+     * Match a scriptPubKey against every wallet key by recomputing each key's
+     * scriptPubKey. Used for outputs where [extractPubKeyHash] can't yield a
+     * direct hash160 — P2SH-wrapping types and P2TR. The scriptType isn't a
+     * filter here because a parsed-as-[ScriptType.P2SH] external scriptPubKey
+     * may still match a wallet key tagged [ScriptType.P2SH_P2WPKH] (the wallet
+     * generates the latter but the parser can't tell from the bytes alone).
+     *
+     * Linear in the wallet's key count — PR-10 of the OSS readiness audit
+     * replaces this with a hash-lookup index.
+     */
+    private suspend fun findByScriptPubKey(scriptPubKey: ByteArray): WalletPublicKey? {
         val keys = publicKeyManager.getAllPublicKeys()
         for (key in keys) {
-            if (key.scriptType != scriptType) continue
             val keyScriptPubKey = addressConverter.createScriptPubKey(key.publicKey, key.scriptType)
             if (keyScriptPubKey.contentEquals(scriptPubKey)) {
                 return key
@@ -284,6 +294,10 @@ class TransactionProcessor(
                 // OP_0 <20 bytes>
                 scriptPubKey.sliceArray(2 until 22)
             }
+            // P2SH and its wrapped variants put the hash160 of the redeem script
+            // (not the pubkey) into the scriptPubKey; P2TR puts the tweaked
+            // x-only pubkey. Neither yields a direct pubkey hash to look up.
+            ScriptType.P2SH,
             ScriptType.P2SH_P2WPKH,
             ScriptType.P2TR -> null
         }

@@ -267,6 +267,9 @@ class TransactionBuilder(
                     baseSize += 41
                     witnessSize += 66
                 }
+                // Generic P2SH never appears on wallet inputs — the wallet only
+                // spends from its own keys, which are P2PKH / P2SH_P2WPKH / P2WPKH / P2TR.
+                ScriptType.P2SH -> error("Cannot estimate vsize for generic P2SH input — wallet keys must be P2SH_P2WPKH")
             }
         }
 

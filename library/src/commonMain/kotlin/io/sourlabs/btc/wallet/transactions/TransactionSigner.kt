@@ -58,6 +58,10 @@ class TransactionSigner(
             ScriptType.P2SH_P2WPKH -> signP2SHP2WPKH(tx, inputIndex, utxo, privateKey)
             ScriptType.P2WPKH -> signP2WPKH(tx, inputIndex, utxo, privateKey)
             ScriptType.P2TR -> signP2TR(tx, inputIndex, utxo, privateKey, allUtxos)
+            // Generic P2SH never appears on a wallet-owned key — the wallet only
+            // generates P2SH_P2WPKH for nested SegWit. Reaching here means the key
+            // was tagged wrong.
+            ScriptType.P2SH -> error("Cannot sign generic P2SH input — wallet keys must be P2SH_P2WPKH")
         }
     }
 

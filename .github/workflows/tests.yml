@@ -61,5 +61,20 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      # Retry once with a clean state. Gradle's TestOutputStore intermittently
+      # throws "Multiple entries with same key: NNN" when aggregating
+      # Kotlin/Native test results on Linux — the test binary runs and reports
+      # correctly, but result-aggregation fails before the build can finish.
+      # A clean re-run almost always succeeds. Two attempts × ~90 s is cheap
+      # insurance versus blocking PRs on infrastructure flake.
       - name: Run Linux x64 tests
-        run: ./gradlew linuxX64Test
+        run: |
+          set +e
+          ./gradlew linuxX64Test
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "::warning::First linuxX64Test attempt failed (suspected Gradle/Kotlin-Native TestOutputStore index collision). Retrying with clean state..."
+            ./gradlew clean linuxX64Test
+            status=$?
+          fi
+          exit $status

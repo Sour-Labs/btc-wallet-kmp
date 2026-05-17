@@ -11,8 +11,23 @@ enum class ScriptType {
     P2PKH,
 
     /**
+     * Generic Pay-to-Script-Hash. Returned by [io.sourlabs.btc.wallet.keys.AddressConverter.parseAddress]
+     * for any `3...` address, since the scriptPubKey alone (`OP_HASH160 <h> OP_EQUAL`)
+     * doesn't reveal whether the redeem script is P2WPKH, multisig, time-locked, or
+     * something else — that information is only on the spending side.
+     *
+     * The wallet does not generate this type itself; [P2SH_P2WPKH] is used for nested
+     * SegWit outputs the wallet owns.
+     */
+    P2SH,
+
+    /**
      * Pay-to-Script-Hash wrapping P2WPKH (Nested SegWit)
-     * Addresses start with '3' on mainnet
+     * Addresses start with '3' on mainnet.
+     *
+     * Used for wallet-owned keys derived under BIP-49. External `3...` destinations
+     * parsed from an address resolve to the generic [P2SH] instead, since the wrap
+     * isn't inspectable from the scriptPubKey alone.
      */
     P2SH_P2WPKH,
 
