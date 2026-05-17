@@ -163,4 +163,27 @@ sealed class SyncConfig {
         val baseUrl: String,
         val pollingIntervalMs: Long = 30_000L
     ) : SyncConfig()
+
+    companion object {
+        /**
+         * Pick a sensible default sync source for the given network. Used by
+         * [io.sourlabs.btc.wallet.api.BitcoinKit.Builder] and
+         * [io.sourlabs.btc.wallet.api.BitcoinKit.scanWallet] when the caller
+         * doesn't provide an explicit config.
+         *
+         * - MAINNET / TESTNET / SIGNET → [SyncConfig.BlockStream.forNetwork]
+         * - TESTNET4 → [SyncConfig.MempoolSpace.forNetwork] (Blockstream doesn't
+         *   serve Testnet4, so the BlockStream factory would throw)
+         * - REGTEST → throws via the underlying factory; no public default exists
+         */
+        fun defaultForNetwork(
+            network: io.sourlabs.btc.wallet.models.Network,
+        ): SyncConfig = when (network) {
+            io.sourlabs.btc.wallet.models.Network.TESTNET4 -> MempoolSpace.forNetwork(network)
+            io.sourlabs.btc.wallet.models.Network.MAINNET,
+            io.sourlabs.btc.wallet.models.Network.TESTNET,
+            io.sourlabs.btc.wallet.models.Network.SIGNET,
+            io.sourlabs.btc.wallet.models.Network.REGTEST -> BlockStream.forNetwork(network)
+        }
+    }
 }

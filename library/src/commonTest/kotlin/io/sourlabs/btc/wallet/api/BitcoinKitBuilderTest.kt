@@ -61,4 +61,24 @@ class BitcoinKitBuilderTest {
         assertEquals(Network.REGTEST, wallet.network)
         assertEquals(Purpose.BIP84, wallet.purpose)
     }
+
+    @Test
+    fun buildForTestnet4WithoutExplicitSyncConfigSucceeds() {
+        // TESTNET4 needs a sync source that actually serves Testnet4 — Blockstream
+        // doesn't, Mempool.space does. The Builder's implicit default must route
+        // TESTNET4 through MempoolSpace, not crash on
+        // SyncConfig.BlockStream.forNetwork(TESTNET4).
+        //
+        // Anchor for the PR-12 bug where adding the enum value without updating
+        // the default fallback turned `BitcoinKit.builder(network = TESTNET4).build()`
+        // into a hard crash for callers who didn't pass an explicit syncConfig.
+        val wallet = BitcoinKit.builder(
+            WalletConfig.FromMnemonic(
+                mnemonic = testMnemonic,
+                purpose = Purpose.BIP84,
+                network = Network.TESTNET4,
+            )
+        ).build()
+        assertEquals(Network.TESTNET4, wallet.network)
+    }
 }

@@ -393,7 +393,7 @@ class BitcoinKit private constructor(
                 transactionStorage = storage.transactionStorage,
                 unspentOutputStorage = storage.unspentOutputStorage,
             )
-            val primarySyncConfig = syncConfig ?: SyncConfig.BlockStream.forNetwork(walletConfig.network)
+            val primarySyncConfig = syncConfig ?: SyncConfig.defaultForNetwork(walletConfig.network)
             val allSyncConfigs = listOf(primarySyncConfig) + fallbackSyncConfigs
             val syncManager = SyncManager(
                 publicKeyManager = publicKeyManager,
@@ -440,7 +440,7 @@ class BitcoinKit private constructor(
         ): WalletScanResult {
             log.i { "scanWallet(network=$network) started" }
             val seed = fr.acinq.bitcoin.MnemonicCode.toSeed(mnemonic, passphrase)
-            val effectiveSyncConfig = syncConfig ?: SyncConfig.BlockStream.forNetwork(network)
+            val effectiveSyncConfig = syncConfig ?: SyncConfig.defaultForNetwork(network)
             val api = when (effectiveSyncConfig) {
                 is SyncConfig.BlockStream -> BlockchainExplorerApi(effectiveSyncConfig)
                 is SyncConfig.MempoolSpace -> BlockchainExplorerApi(effectiveSyncConfig.baseUrl)
