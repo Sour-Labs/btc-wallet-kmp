@@ -1,5 +1,7 @@
 package io.sourlabs.btc.wallet.core
 
+import io.sourlabs.btc.wallet.models.Network
+
 /**
  * Configuration for wallet synchronization.
  */
@@ -31,13 +33,13 @@ sealed class SyncConfig {
              * REGTEST has no public endpoint — pass the regtest baseUrl explicitly
              * via the constructor instead.
              */
-            fun forNetwork(network: io.sourlabs.btc.wallet.models.Network): MempoolSpace {
+            fun forNetwork(network: Network): MempoolSpace {
                 val url = when (network) {
-                    io.sourlabs.btc.wallet.models.Network.MAINNET -> DEFAULT_MAINNET_URL
-                    io.sourlabs.btc.wallet.models.Network.TESTNET -> DEFAULT_TESTNET_URL
-                    io.sourlabs.btc.wallet.models.Network.TESTNET4 -> DEFAULT_TESTNET4_URL
-                    io.sourlabs.btc.wallet.models.Network.SIGNET -> DEFAULT_SIGNET_URL
-                    io.sourlabs.btc.wallet.models.Network.REGTEST -> throw IllegalArgumentException(
+                    Network.MAINNET -> DEFAULT_MAINNET_URL
+                    Network.TESTNET -> DEFAULT_TESTNET_URL
+                    Network.TESTNET4 -> DEFAULT_TESTNET4_URL
+                    Network.SIGNET -> DEFAULT_SIGNET_URL
+                    Network.REGTEST -> throw IllegalArgumentException(
                         "REGTEST has no public Mempool.space endpoint; " +
                             "construct SyncConfig.MempoolSpace(baseUrl = ...) explicitly"
                     )
@@ -103,17 +105,17 @@ sealed class SyncConfig {
              * [SyncConfig.MempoolSpace.forNetwork] or pass an explicit baseUrl via
              * the constructor. Same for REGTEST.
              */
-            fun forNetwork(network: io.sourlabs.btc.wallet.models.Network): BlockStream {
+            fun forNetwork(network: Network): BlockStream {
                 val url = when (network) {
-                    io.sourlabs.btc.wallet.models.Network.MAINNET -> DEFAULT_MAINNET_URL
-                    io.sourlabs.btc.wallet.models.Network.TESTNET -> DEFAULT_TESTNET_URL
-                    io.sourlabs.btc.wallet.models.Network.SIGNET -> DEFAULT_SIGNET_URL
-                    io.sourlabs.btc.wallet.models.Network.TESTNET4 -> throw IllegalArgumentException(
+                    Network.MAINNET -> DEFAULT_MAINNET_URL
+                    Network.TESTNET -> DEFAULT_TESTNET_URL
+                    Network.SIGNET -> DEFAULT_SIGNET_URL
+                    Network.TESTNET4 -> throw IllegalArgumentException(
                         "Blockstream does not currently serve Testnet4; use " +
                             "SyncConfig.MempoolSpace.forNetwork(Network.TESTNET4) " +
                             "or construct SyncConfig.BlockStream(baseUrl = ...) explicitly"
                     )
-                    io.sourlabs.btc.wallet.models.Network.REGTEST -> throw IllegalArgumentException(
+                    Network.REGTEST -> throw IllegalArgumentException(
                         "REGTEST has no public Blockstream endpoint; " +
                             "construct SyncConfig.BlockStream(baseUrl = ...) explicitly"
                     )
@@ -129,26 +131,26 @@ sealed class SyncConfig {
              * construct SyncConfig.BlockStream(baseUrl = ...) explicitly for either).
              */
             fun enterprise(
-                network: io.sourlabs.btc.wallet.models.Network,
+                network: Network,
                 clientId: String,
                 clientSecret: String,
                 tokenUrl: String = Auth.DEFAULT_TOKEN_URL
             ): BlockStream = when (network) {
-                io.sourlabs.btc.wallet.models.Network.MAINNET -> BlockStream(
+                Network.MAINNET -> BlockStream(
                     baseUrl = ENTERPRISE_MAINNET_URL,
                     auth = Auth(clientId, clientSecret, tokenUrl)
                 )
-                io.sourlabs.btc.wallet.models.Network.TESTNET -> BlockStream(
+                Network.TESTNET -> BlockStream(
                     baseUrl = ENTERPRISE_TESTNET_URL,
                     auth = Auth(clientId, clientSecret, tokenUrl)
                 )
-                io.sourlabs.btc.wallet.models.Network.SIGNET -> BlockStream(baseUrl = DEFAULT_SIGNET_URL)
-                io.sourlabs.btc.wallet.models.Network.TESTNET4 -> throw IllegalArgumentException(
+                Network.SIGNET -> BlockStream(baseUrl = DEFAULT_SIGNET_URL)
+                Network.TESTNET4 -> throw IllegalArgumentException(
                     "Blockstream does not serve Testnet4 (Enterprise or otherwise); use " +
                         "SyncConfig.MempoolSpace.forNetwork(Network.TESTNET4) or " +
                         "construct SyncConfig.BlockStream(baseUrl = ...) explicitly"
                 )
-                io.sourlabs.btc.wallet.models.Network.REGTEST -> throw IllegalArgumentException(
+                Network.REGTEST -> throw IllegalArgumentException(
                     "REGTEST has no public Blockstream endpoint; " +
                         "construct SyncConfig.BlockStream(baseUrl = ...) explicitly"
                 )
@@ -177,13 +179,13 @@ sealed class SyncConfig {
          * - REGTEST → throws via the underlying factory; no public default exists
          */
         fun defaultForNetwork(
-            network: io.sourlabs.btc.wallet.models.Network,
+            network: Network,
         ): SyncConfig = when (network) {
-            io.sourlabs.btc.wallet.models.Network.TESTNET4 -> MempoolSpace.forNetwork(network)
-            io.sourlabs.btc.wallet.models.Network.MAINNET,
-            io.sourlabs.btc.wallet.models.Network.TESTNET,
-            io.sourlabs.btc.wallet.models.Network.SIGNET,
-            io.sourlabs.btc.wallet.models.Network.REGTEST -> BlockStream.forNetwork(network)
+            Network.TESTNET4 -> MempoolSpace.forNetwork(network)
+            Network.MAINNET,
+            Network.TESTNET,
+            Network.SIGNET,
+            Network.REGTEST -> BlockStream.forNetwork(network)
         }
     }
 }

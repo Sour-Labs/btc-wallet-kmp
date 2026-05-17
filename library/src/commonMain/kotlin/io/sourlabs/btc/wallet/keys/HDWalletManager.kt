@@ -133,6 +133,16 @@ class HDWalletManager private constructor(
         /**
          * Create from raw seed bytes. Derives the account key from the master once;
          * subsequent private-key derivations work from the cached account key.
+         *
+         * **Security note on seed lifetime:** the caller's [seed] array is *not*
+         * zeroed by this method. Kotlin Multiplatform doesn't expose a reliable
+         * cross-platform primitive for locked / zeroed memory, and the derived
+         * key material persists on the JVM heap (or Kotlin/Native heap) for as
+         * long as this manager lives. If the seed is sensitive — i.e., not
+         * already material the OS keystore holds — callers should clear their
+         * own copies after construction (`seed.fill(0)`) and prefer
+         * [fromMnemonic] / [fromExtendedPrivateKey] when the upstream source
+         * already owns the bytes.
          */
         fun fromSeed(
             seed: ByteArray,

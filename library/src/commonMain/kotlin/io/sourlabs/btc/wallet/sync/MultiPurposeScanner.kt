@@ -199,30 +199,4 @@ class MultiPurposeScanner(
         return AddressProbe.Active(txCount = totalTxCount, balance = utxos.sumOf { it.value })
     }
 
-    /**
-     * Quick check if any purpose has funds (stops at first finding).
-     */
-    suspend fun quickCheck(): Purpose? {
-        for (purpose in Purpose.allPurposes) {
-            val hdWallet = HDWalletManager.fromSeed(seed, purpose, network, account = 0)
-            val addressConverter = AddressConverter(network)
-            val scriptType = ScriptType.fromPurpose(purpose)
-
-            // Just check first few addresses
-            for (i in 0 until 5) {
-                val publicKey = hdWallet.derivePublicKey(isExternal = true, index = i)
-                val address = addressConverter.toAddress(publicKey, scriptType)
-
-                try {
-                    val addressInfo = api.getAddress(address)
-                    if (addressInfo.chainStats.txCount > 0 || addressInfo.mempoolStats.txCount > 0) {
-                        return purpose
-                    }
-                } catch (_: Exception) {
-                    // Continue checking
-                }
-            }
-        }
-        return null
-    }
 }

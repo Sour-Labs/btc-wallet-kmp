@@ -60,8 +60,11 @@ data class WalletTransaction(
         get() = status == TransactionStatus.CONFIRMED && blockHeight != null
 
     /**
-     * Fee rate in sat/vB (null if fee unknown).
+     * Fee rate in sat/vB (null if fee unknown). Uses the same vSize formula as
+     * [io.sourlabs.btc.wallet.transactions.CreatedTransaction.feeRate]:
+     * `vSize = (weight + 3) / 4`. The pre-PR-13 form `fee / (weight / 4.0)`
+     * was off by ±0.25 vbyte vs the standard integer-rounded vSize.
      */
     val feeRate: Double?
-        get() = fee?.let { it.toDouble() / transaction.weight().toDouble() * 4 }
+        get() = fee?.let { it.toDouble() / ((transaction.weight() + 3) / 4) }
 }
