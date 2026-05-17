@@ -191,9 +191,15 @@ class TransactionBuilder(
 
         val totalInput = utxos.sumOf { it.value }
 
-        // Estimate fee
-        val estimatedVSize = estimateVSize(utxos.size, 1, inputKeys.map { it.scriptType })
-        val fee = estimatedVSize * feeRate
+        // Estimate fee using each input's actual script type and the destination's
+        // own script type, instead of assuming P2WPKH for everything.
+        val destinationScriptType = addressConverter.parseAddress(toAddress)?.scriptType
+            ?: throw IllegalArgumentException("Invalid destination address: $toAddress")
+        val fee = FeeCalculator.estimateFee(
+            inputs = inputKeys.map { it.scriptType },
+            outputs = listOf(destinationScriptType),
+            feeRateSatPerVb = feeRate,
+        )
         val sendAmount = totalInput - fee
 
         require(sendAmount > 0) { "Insufficient funds after fees" }
@@ -230,58 +236,4 @@ class TransactionBuilder(
         )
     }
 
-    /**
-     * Estimate virtual size of a transaction.
-     */
-    private fun estimateVSize(
-        inputCount: Int,
-        outputCount: Int,
-        inputScriptTypes: List<ScriptType>
-    ): Long {
-        // Base transaction overhead
-        var baseSize = 10L // version (4) + locktime (4) + input count (1) + output count (1)
-        var witnessSize = 0L
-
-        // Add input sizes based on script type
-        for (scriptType in inputScriptTypes) {
-            when (scriptType) {
-                ScriptType.P2PKH -> {
-                    // 32 (txid) + 4 (vout) + 1 (script length) + 107 (script) + 4 (sequence)
-                    baseSize += 148
-                }
-                ScriptType.P2SH_P2WPKH -> {
-                    // Non-witness: 32 + 4 + 1 + 23 + 4 = 64
-                    // Witness: 1 + 73 + 34 = 108
-                    baseSize += 64
-                    witnessSize += 108
-                }
-                ScriptType.P2WPKH -> {
-                    // Non-witness: 32 + 4 + 1 + 0 + 4 = 41
-                    // Witness: 1 + 73 + 34 = 108
-                    baseSize += 41
-                    witnessSize += 108
-                }
-                ScriptType.P2TR -> {
-                    // Non-witness: 32 + 4 + 1 + 0 + 4 = 41
-                    // Witness: 1 + 65 = 66 (Schnorr signature)
-                    baseSize += 41
-                    witnessSize += 66
-                }
-                // Generic P2SH never appears on wallet inputs — the wallet only
-                // spends from its own keys, which are P2PKH / P2SH_P2WPKH / P2WPKH / P2TR.
-                ScriptType.P2SH -> error("Cannot estimate vsize for generic P2SH input — wallet keys must be P2SH_P2WPKH")
-            }
-        }
-
-        // Add marker and flag for witness transactions
-        if (witnessSize > 0) {
-            baseSize += 2 // marker (1) + flag (1)
-        }
-
-        // Add output sizes (assume P2WPKH: 8 + 1 + 22 = 31 bytes)
-        baseSize += outputCount * 31L
-
-        // Calculate virtual size: base + witness/4
-        return baseSize + (witnessSize + 3) / 4
-    }
 }

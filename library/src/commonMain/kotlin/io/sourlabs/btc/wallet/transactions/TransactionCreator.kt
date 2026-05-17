@@ -4,6 +4,7 @@ import fr.acinq.bitcoin.Transaction
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
+import io.sourlabs.btc.wallet.models.ScriptType
 import io.sourlabs.btc.wallet.models.TransactionStatus
 import io.sourlabs.btc.wallet.models.TransactionType
 import io.sourlabs.btc.wallet.models.UnspentOutput
@@ -121,8 +122,20 @@ class TransactionCreator(
     private val transactionStorage: TransactionStorage,
     private val unspentOutputStorage: UnspentOutputStorage,
 ) {
-    private val selector = UnspentOutputSelector()
+    private val selector = UnspentOutputSelector(
+        walletScriptType = ScriptType.fromPurpose(hdWalletManager.purpose),
+    )
     private val builder = TransactionBuilder(addressConverter)
+
+    /**
+     * Parse a destination address and return its script type, throwing
+     * [IllegalArgumentException] if invalid. Combines the address-validation
+     * step and the script-type lookup so the fee estimator can size the
+     * destination output against its real type instead of assuming P2WPKH.
+     */
+    private fun parseDestinationScriptType(toAddress: String): ScriptType =
+        addressConverter.parseAddress(toAddress)?.scriptType
+            ?: throw IllegalArgumentException("Invalid address: $toAddress")
     private val signer: TransactionSigner? = if (!hdWalletManager.isWatchOnly) {
         TransactionSigner(hdWalletManager)
     } else {
@@ -198,13 +211,10 @@ class TransactionCreator(
         feeRate: Long,
         strategy: SelectionStrategy = SelectionStrategy.AUTOMATIC
     ): SendInfo? {
-        // Validate address
-        if (!addressConverter.isValidAddress(toAddress)) {
-            throw IllegalArgumentException("Invalid address: $toAddress")
-        }
-
+        val destinationScriptType = parseDestinationScriptType(toAddress)
         val spendableUtxos = utxoProvider.getSpendableUtxos()
-        val selection = selector.select(spendableUtxos, amount, feeRate, strategy) ?: return null
+        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy)
+            ?: return null
 
         return SendInfo(
             amount = amount,
@@ -234,10 +244,7 @@ class TransactionCreator(
         rbfEnabled: Boolean = true,
         subtractFeeFromAmount: Boolean = false
     ): CreatedTransaction {
-        // Validate address
-        if (!addressConverter.isValidAddress(toAddress)) {
-            throw IllegalArgumentException("Invalid address: $toAddress")
-        }
+        val destinationScriptType = parseDestinationScriptType(toAddress)
 
         require(signer != null) { "Cannot create signed transactions with a watch-only wallet" }
 
@@ -245,7 +252,7 @@ class TransactionCreator(
         val spendableUtxos = utxoProvider.getSpendableUtxos()
 
         // Select UTXOs
-        val selection = selector.select(spendableUtxos, amount, feeRate, strategy)
+        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy)
             ?: throw InsufficientFundsException("Insufficient funds to send $amount satoshis with fee rate $feeRate sat/vB")
 
         // Get public keys for inputs
@@ -304,15 +311,12 @@ class TransactionCreator(
         rbfEnabled: Boolean = true,
         subtractFeeFromAmount: Boolean = false
     ): CreatedTransaction {
-        // Validate address
-        if (!addressConverter.isValidAddress(toAddress)) {
-            throw IllegalArgumentException("Invalid address: $toAddress")
-        }
+        val destinationScriptType = parseDestinationScriptType(toAddress)
 
         require(signer != null) { "Cannot create signed transactions with a watch-only wallet" }
 
         // Select UTXOs (manual)
-        val selection = selector.selectManual(utxos, amount, feeRate)
+        val selection = selector.selectManual(utxos, amount, feeRate, destinationScriptType)
             ?: throw InsufficientFundsException("Selected UTXOs insufficient for amount $amount with fee rate $feeRate")
 
         // Get public keys for inputs
@@ -365,10 +369,9 @@ class TransactionCreator(
         feeRate: Long,
         rbfEnabled: Boolean = true
     ): CreatedTransaction {
-        // Validate address
-        if (!addressConverter.isValidAddress(toAddress)) {
-            throw IllegalArgumentException("Invalid address: $toAddress")
-        }
+        // Validate up front; buildSweep also parses but throwing here makes the
+        // failure surface adjacent to the user-facing API.
+        parseDestinationScriptType(toAddress)
 
         require(signer != null) { "Cannot create signed transactions with a watch-only wallet" }
 
@@ -416,16 +419,13 @@ class TransactionCreator(
         rbfEnabled: Boolean = true,
         subtractFeeFromAmount: Boolean = false
     ): UnsignedTransaction {
-        // Validate address
-        if (!addressConverter.isValidAddress(toAddress)) {
-            throw IllegalArgumentException("Invalid address: $toAddress")
-        }
+        val destinationScriptType = parseDestinationScriptType(toAddress)
 
         // Get spendable UTXOs
         val spendableUtxos = utxoProvider.getSpendableUtxos()
 
         // Select UTXOs
-        val selection = selector.select(spendableUtxos, amount, feeRate, strategy)
+        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy)
             ?: throw InsufficientFundsException("Insufficient funds")
 
         // Get public keys for inputs

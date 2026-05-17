@@ -1,6 +1,8 @@
 package io.sourlabs.btc.wallet.utxo
 
+import io.sourlabs.btc.wallet.models.ScriptType
 import io.sourlabs.btc.wallet.models.UnspentOutput
+import io.sourlabs.btc.wallet.transactions.FeeCalculator
 
 /**
  * Strategy for selecting UTXOs for a transaction.
@@ -67,9 +69,23 @@ data class SelectionResult(
 
 /**
  * Selects UTXOs for spending based on the chosen strategy.
+ *
+ * Sizes inputs by their actual [ScriptType] (via [FeeCalculator]) rather than
+ * assuming P2WPKH — so BIP-44 wallets no longer under-estimate fees by ~50%,
+ * and BIP-86 fees aren't over-stated. The wallet's own script type also drives
+ * change-output sizing.
+ *
+ * @param walletScriptType the wallet's own script type — used to size both the
+ *   wallet's *change* output and the wallet's own inputs that lack a per-UTXO
+ *   scriptType tag at selection time (each selected UTXO actually carries its
+ *   own scriptType; this is the fallback when a hypothetical input is being
+ *   sized without a chosen UTXO).
+ * @param dustThreshold change outputs smaller than this are absorbed into the
+ *   fee instead of being emitted (standard Bitcoin Core default: 546 sats).
  */
 class UnspentOutputSelector(
-    private val dustThreshold: Long = 546 // Standard dust threshold for P2PKH
+    private val walletScriptType: ScriptType,
+    private val dustThreshold: Long = 546,
 ) {
     /**
      * Select UTXOs to cover the target amount plus fees.
@@ -77,16 +93,16 @@ class UnspentOutputSelector(
      * @param utxos available UTXOs to select from
      * @param targetAmount amount to send in satoshis
      * @param feeRate fee rate in sat/vB
+     * @param destinationScriptType the script type of the *destination* output,
+     *   so fee estimation uses the correct output size
      * @param strategy selection strategy
-     * @param changeOutputSize estimated size of change output script (default 34 for P2WPKH)
-     * @return selection result or null if insufficient funds
      */
     fun select(
         utxos: List<UnspentOutput>,
         targetAmount: Long,
         feeRate: Long,
+        destinationScriptType: ScriptType,
         strategy: SelectionStrategy = SelectionStrategy.AUTOMATIC,
-        changeOutputSize: Int = 34
     ): SelectionResult? {
         if (utxos.isEmpty()) return null
 
@@ -95,10 +111,10 @@ class UnspentOutputSelector(
             SelectionStrategy.OLDEST_FIRST -> utxos.sortedBy { it.confirmations }.reversed()
             SelectionStrategy.LARGEST_FIRST -> utxos.sortedByDescending { it.value }
             SelectionStrategy.SMALLEST_FIRST -> utxos.sortedBy { it.value }
-            SelectionStrategy.PRIVACY_OPTIMIZED -> selectForPrivacy(utxos, targetAmount, feeRate)
+            SelectionStrategy.PRIVACY_OPTIMIZED -> selectForPrivacy(utxos, targetAmount, feeRate, destinationScriptType)
         }
 
-        return selectFromSorted(sortedUtxos, targetAmount, feeRate, changeOutputSize)
+        return selectFromSorted(sortedUtxos, targetAmount, feeRate, destinationScriptType)
     }
 
     /**
@@ -108,25 +124,30 @@ class UnspentOutputSelector(
         utxos: List<UnspentOutput>,
         targetAmount: Long,
         feeRate: Long,
-        changeOutputSize: Int = 34
+        destinationScriptType: ScriptType,
     ): SelectionResult? {
         val totalInput = utxos.sumOf { it.value }
 
-        // Calculate fee with and without change output
-        val feeWithoutChange = estimateFee(utxos.size, 1, feeRate)
-        val feeWithChange = estimateFee(utxos.size, 2, feeRate, changeOutputSize)
+        val feeWithoutChange = estimateFeeForInputsAndOutputs(
+            inputs = utxos.map { it.scriptType },
+            outputs = listOf(destinationScriptType),
+            feeRate = feeRate,
+        )
+        val feeWithChange = estimateFeeForInputsAndOutputs(
+            inputs = utxos.map { it.scriptType },
+            outputs = listOf(destinationScriptType, walletScriptType),
+            feeRate = feeRate,
+        )
 
-        // Check if we have enough without change
         if (totalInput < targetAmount + feeWithoutChange) {
             return null // Insufficient funds
         }
 
-        // Determine if we need change
         val potentialChange = totalInput - targetAmount - feeWithChange
         val (fee, change) = if (potentialChange > dustThreshold) {
             feeWithChange to potentialChange
         } else {
-            // No change output, fee absorbs the dust
+            // Change would be dust — drop the change output and let the fee absorb it.
             (totalInput - targetAmount) to 0L
         }
 
@@ -143,7 +164,7 @@ class UnspentOutputSelector(
         sortedUtxos: List<UnspentOutput>,
         targetAmount: Long,
         feeRate: Long,
-        changeOutputSize: Int
+        destinationScriptType: ScriptType,
     ): SelectionResult? {
         val selected = mutableListOf<UnspentOutput>()
         var totalInput = 0L
@@ -151,23 +172,27 @@ class UnspentOutputSelector(
         for (utxo in sortedUtxos) {
             selected.add(utxo)
             totalInput += utxo.value
+            val inputScriptTypes = selected.map { it.scriptType }
 
-            // Calculate fee with current selection
-            val feeWithChange = estimateFee(selected.size, 2, feeRate, changeOutputSize)
-            val feeWithoutChange = estimateFee(selected.size, 1, feeRate)
+            val feeWithChange = estimateFeeForInputsAndOutputs(
+                inputs = inputScriptTypes,
+                outputs = listOf(destinationScriptType, walletScriptType),
+                feeRate = feeRate,
+            )
+            val feeWithoutChange = estimateFeeForInputsAndOutputs(
+                inputs = inputScriptTypes,
+                outputs = listOf(destinationScriptType),
+                feeRate = feeRate,
+            )
 
-            // Check if we have enough
             if (totalInput >= targetAmount + feeWithoutChange) {
                 val potentialChange = totalInput - targetAmount - feeWithChange
-
                 val (fee, change) = if (potentialChange > dustThreshold) {
                     feeWithChange to potentialChange
-                } else if (totalInput >= targetAmount + feeWithoutChange) {
-                    (totalInput - targetAmount) to 0L
                 } else {
-                    continue // Need more inputs
+                    // Sub-dust change — drop the change output, fee absorbs the residual.
+                    (totalInput - targetAmount) to 0L
                 }
-
                 return SelectionResult(
                     selectedUtxos = selected.toList(),
                     totalInput = totalInput,
@@ -184,13 +209,21 @@ class UnspentOutputSelector(
     private fun selectForPrivacy(
         utxos: List<UnspentOutput>,
         targetAmount: Long,
-        feeRate: Long
+        feeRate: Long,
+        destinationScriptType: ScriptType,
     ): List<UnspentOutput> {
         // Simple privacy optimization: try to find a single UTXO that covers the amount
-        // to avoid linking multiple UTXOs together. Use the actual fee estimate so we
-        // don't prematurely stop on a UTXO that cannot fund the transaction.
-        val minimumRequired = targetAmount + estimateFee(1, 1, feeRate)
-        val singleUtxo = utxos.find { it.value >= minimumRequired }
+        // to avoid linking multiple UTXOs together. Use the actual fee estimate (sized
+        // against the candidate UTXO's own script type) so we don't prematurely stop
+        // on a UTXO that cannot fund the transaction.
+        val singleUtxo = utxos.find { utxo ->
+            val fee = estimateFeeForInputsAndOutputs(
+                inputs = listOf(utxo.scriptType),
+                outputs = listOf(destinationScriptType),
+                feeRate = feeRate,
+            )
+            utxo.value >= targetAmount + fee
+        }
         if (singleUtxo != null) {
             return listOf(singleUtxo)
         }
@@ -199,40 +232,9 @@ class UnspentOutputSelector(
         return utxos.sortedByDescending { it.value }
     }
 
-    /**
-     * Estimate transaction fee.
-     *
-     * @param inputCount number of inputs
-     * @param outputCount number of outputs
-     * @param feeRate fee rate in sat/vB
-     * @param changeOutputSize size of change output script (if applicable)
-     */
-    private fun estimateFee(
-        inputCount: Int,
-        outputCount: Int,
+    private fun estimateFeeForInputsAndOutputs(
+        inputs: List<ScriptType>,
+        outputs: List<ScriptType>,
         feeRate: Long,
-        changeOutputSize: Int = 34
-    ): Long {
-        // Estimate virtual size for native SegWit transaction
-        // Header: 10.5 vBytes (4 version + 0.25 marker + 0.25 flag + 1 input count + 1 output count + 4 locktime)
-        // Input: ~68 vBytes each (41 non-witness + 27 witness / 4)
-        // Output: 8 + 1 + scriptSize vBytes each
-
-        val headerSize = 11 // Rounded
-        val inputSize = inputCount * 68
-        val outputSize = outputCount * (9 + changeOutputSize)
-
-        val vSize = headerSize + inputSize + outputSize
-        return vSize * feeRate
-    }
-
-    /**
-     * Get dust threshold for a given script type size.
-     */
-    fun getDustThreshold(scriptSize: Int = 34): Long {
-        // Standard dust calculation: 3 * (input vsize) * minRelayFee
-        // For P2WPKH input: 68 vBytes, minRelayFee: 1 sat/vB
-        // Dust = 3 * 68 * 1 = 204 sats (but commonly 546 is used)
-        return dustThreshold
-    }
+    ): Long = FeeCalculator.estimateFee(inputs, outputs, feeRate)
 }
