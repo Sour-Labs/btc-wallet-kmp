@@ -89,28 +89,40 @@ internal object FeeCalculator {
 
     /**
      * Minimum non-dust output value for the given script type, computed via
-     * Bitcoin Core's standard rule: an output is "dust" if it costs more in fees
-     * to spend than a third of its own value would yield at the minimum relay
-     * fee. So the dust floor is `3 × inputVSize × minRelayFeeSatPerVb`.
+     * Bitcoin Core's `GetDustThreshold` (`src/policy/policy.cpp`):
      *
-     * Per-type defaults at minRelayFee = 1 sat/vB:
-     *   P2PKH:        444 sats  (3 × 148)
-     *   P2SH / P2SH_P2WPKH: 273 sats  (3 × 91)
-     *   P2WPKH:       204 sats  (3 × 68)
-     *   P2TR:         174 sats  (3 × 58)
+     *   dust = (outputSize + spendingInputSize) × dustRelayFee
      *
-     * For generic [ScriptType.P2SH], the worst-case-typical assumption is
-     * P2SH-wrapping-P2WPKH (91 vbytes) — the only kind of P2SH this wallet
-     * is likely to send to in practice.
+     * Bitcoin Core uses two canonical spending-input sizes regardless of the
+     * actual witness program: 148 vbytes for non-witness outputs (P2PKH, P2SH),
+     * and 67 vbytes for any witness output (P2WPKH, P2TR, future versions).
+     * P2SH-wrapping-P2WPKH counts as non-witness here because its scriptPubKey
+     * looks like plain P2SH from the outside — that's the more conservative
+     * assumption (larger dust threshold), and it's what the network enforces.
+     *
+     * Per-type values at the default dustRelayFee = 3 sat/vB (Bitcoin Core's
+     * `DEFAULT_DUST_RELAY_FEE = 3000 sat/kvB`):
+     *   P2PKH:                546 sats   (34 + 148) × 3
+     *   P2SH / P2SH_P2WPKH:   540 sats   (32 + 148) × 3
+     *   P2WPKH:               294 sats   (31 +  67) × 3
+     *   P2TR:                 330 sats   (43 +  67) × 3
+     *
+     * The previous (PR-08 first commit) formula omitted the output size and
+     * used minRelayFee = 1 sat/vB, producing thresholds 30–40% lower than the
+     * network's. Amounts between those numbers and these would have passed
+     * validation but been rejected on broadcast as dust — exactly the failure
+     * the validation gate is meant to catch.
      */
-    fun dustThreshold(scriptType: ScriptType, minRelayFeeSatPerVb: Long = 1): Long {
+    fun dustThreshold(scriptType: ScriptType, dustRelayFeeSatPerVb: Long = 3): Long {
         val spendingInputVSize = when (scriptType) {
-            ScriptType.P2PKH -> 148
+            // Non-witness outputs: a P2PKH input at 148 vbytes is the canonical worst case.
+            ScriptType.P2PKH,
             ScriptType.P2SH,
-            ScriptType.P2SH_P2WPKH -> 91
-            ScriptType.P2WPKH -> 68
-            ScriptType.P2TR -> 58
+            ScriptType.P2SH_P2WPKH -> 148
+            // Witness outputs: Bitcoin Core uses a uniform 67-vbyte spending input.
+            ScriptType.P2WPKH,
+            ScriptType.P2TR -> 67
         }
-        return 3L * spendingInputVSize * minRelayFeeSatPerVb
+        return (outputVSize(scriptType) + spendingInputVSize) * dustRelayFeeSatPerVb
     }
 }

@@ -234,27 +234,33 @@ class TransactionCreatorTest {
     @Test
     fun createAllowsSubDustAmountWhenSubtractingFee() = runTest {
         // When the user opts into subtractFeeFromAmount, sub-dust amounts are
-        // their explicit choice. The pre-flight check should let it through —
-        // the network may still reject if the final amount-minus-fee is dust,
-        // but that's the user's call to make.
+        // their explicit choice. The validation gate should let it through —
+        // selection / build / signing may still fail downstream (e.g. amount-
+        // minus-fee goes negative), but that's the user's call to make.
+        //
+        // We can't just rely on "the call didn't throw InvalidAmountException"
+        // because real wallets fail later anyway for tiny amounts. Instead,
+        // catch any exception and assert it is NOT InvalidAmountException —
+        // that's the validation regression we'd be guarding against.
         val f = newFixture()
         f.publicKeyManager.initialize()
         val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
         f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
 
-        // Doesn't throw at validation time. Selection / build may still fail downstream,
-        // but the validation hurdle is cleared.
-        runCatching {
+        val outcome = runCatching {
             f.creator.create(
                 toAddress = externalDestination,
-                amount = 100,  // sub-dust, but...
+                amount = 100,  // sub-dust for P2WPKH (294 sats), but...
                 feeRate = 1,
                 subtractFeeFromAmount = true,  // ...subtracting fee means user opted in
             )
         }
-        // If the call threw, it must not be InvalidAmountException (the dust check is the
-        // only thing that would have triggered InvalidAmountException at this amount).
-        // Anything else (e.g. signature math) is downstream of the validation gate.
+        val thrown = outcome.exceptionOrNull()
+        assertTrue(
+            thrown !is InvalidAmountException,
+            "subtractFeeFromAmount=true must bypass the dust gate; instead got " +
+                "${thrown?.let { it::class.simpleName }}: ${thrown?.message}",
+        )
     }
 
     @Test
