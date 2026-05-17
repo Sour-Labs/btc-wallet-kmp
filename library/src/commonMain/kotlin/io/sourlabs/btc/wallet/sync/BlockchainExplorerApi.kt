@@ -13,11 +13,56 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.sourlabs.btc.wallet.core.SyncConfig
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.random.Random
+import kotlinx.coroutines.delay
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 private val log = Logger.withTag("BlockchainExplorerApi")
+
+/**
+ * Retry [block] with exponential backoff and jitter on retriable failures.
+ *
+ * `isRetriable` defaults to "anything except [ClientRequestException]" — 4xx
+ * responses indicate a request the server actively rejected, which a retry
+ * won't fix. `CancellationException` is always rethrown so coroutine cancel
+ * still works while a retry is in-flight.
+ *
+ * Intended for idempotent GETs only. `POST /tx` must remain caller-idempotent
+ * so the user (or upstream code) decides what to do when a broadcast looks
+ * like it failed — silent retries here could cause double-submission spam.
+ *
+ * `internal` for testability — see `RetryTest` in commonTest.
+ */
+internal suspend fun <T> withRetry(
+    maxAttempts: Int = 3,
+    initialDelayMs: Long = 250,
+    multiplier: Double = 3.0,
+    jitterFraction: Double = 0.3,
+    isRetriable: (Throwable) -> Boolean = { it !is ClientRequestException },
+    block: suspend () -> T,
+): T {
+    require(maxAttempts > 0) { "maxAttempts must be positive" }
+    var delayMs = initialDelayMs.toDouble()
+    var attempt = 0
+    while (true) {
+        try {
+            return block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            if (!isRetriable(e) || attempt == maxAttempts - 1) throw e
+            val jitter = delayMs * jitterFraction * (Random.nextDouble() * 2 - 1)
+            val sleep = (delayMs + jitter).toLong().coerceAtLeast(0)
+            log.w(e) { "retriable failure on attempt ${attempt + 1}/$maxAttempts, sleeping ${sleep}ms" }
+            delay(sleep)
+            delayMs *= multiplier
+            attempt++
+        }
+    }
+}
 
 /**
  * API client for blockchain data.
@@ -96,17 +141,17 @@ class BlockchainExplorerApi private constructor(
     /**
      * Get address information including transaction history.
      */
-    suspend fun getAddress(address: String): AddressResponse {
+    suspend fun getAddress(address: String): AddressResponse = withRetry {
         log.d { "GET /address/$address" }
-        return client.get("$baseUrl/address/$address").body()
+        client.get("$baseUrl/address/$address").body()
     }
 
     /**
      * Get transactions for an address.
      */
-    suspend fun getAddressTransactions(address: String): List<ApiTransaction> {
+    suspend fun getAddressTransactions(address: String): List<ApiTransaction> = withRetry {
         log.d { "GET /address/$address/txs" }
-        return client.get("$baseUrl/address/$address/txs").body()
+        client.get("$baseUrl/address/$address/txs").body()
     }
 
     /**
@@ -117,51 +162,57 @@ class BlockchainExplorerApi private constructor(
     suspend fun getAddressChainTxs(
         address: String,
         lastSeenTxid: String? = null
-    ): List<ApiTransaction> {
+    ): List<ApiTransaction> = withRetry {
         val url = if (lastSeenTxid != null) {
             "$baseUrl/address/$address/txs/chain/$lastSeenTxid"
         } else {
             "$baseUrl/address/$address/txs/chain"
         }
         log.d { "GET /address/$address/txs/chain${if (lastSeenTxid != null) " (after=$lastSeenTxid)" else ""}" }
-        return client.get(url).body()
+        client.get(url).body()
     }
 
     /**
      * Get all unconfirmed (mempool) transactions for an address. Returns up
      * to 50 newest-first; no pagination cursor.
      */
-    suspend fun getAddressMempoolTxs(address: String): List<ApiTransaction> {
+    suspend fun getAddressMempoolTxs(address: String): List<ApiTransaction> = withRetry {
         log.d { "GET /address/$address/txs/mempool" }
-        return client.get("$baseUrl/address/$address/txs/mempool").body()
+        client.get("$baseUrl/address/$address/txs/mempool").body()
     }
 
     /**
      * Get UTXOs for an address.
      */
-    suspend fun getAddressUtxos(address: String): List<ApiUtxo> {
+    suspend fun getAddressUtxos(address: String): List<ApiUtxo> = withRetry {
         log.d { "GET /address/$address/utxo" }
-        return client.get("$baseUrl/address/$address/utxo").body()
+        client.get("$baseUrl/address/$address/utxo").body()
     }
 
     /**
      * Get a transaction by its ID.
      */
-    suspend fun getTransaction(txId: String): ApiTransaction {
+    suspend fun getTransaction(txId: String): ApiTransaction = withRetry {
         log.d { "GET /tx/$txId" }
-        return client.get("$baseUrl/tx/$txId").body()
+        client.get("$baseUrl/tx/$txId").body()
     }
 
     /**
      * Get raw transaction hex.
      */
-    suspend fun getRawTransaction(txId: String): String {
+    suspend fun getRawTransaction(txId: String): String = withRetry {
         log.d { "GET /tx/$txId/hex" }
-        return client.get("$baseUrl/tx/$txId/hex").bodyAsText()
+        client.get("$baseUrl/tx/$txId/hex").bodyAsText()
     }
 
     /**
      * Broadcast a transaction.
+     *
+     * Deliberately NOT wrapped in withRetry — broadcast must stay caller-idempotent
+     * so the user (or upstream code) decides what to do when a submission looks
+     * like it failed. A silent retry could double-submit and spam the explorer's
+     * mempool with the same txid twice.
+     *
      * @return transaction ID if successful
      */
     suspend fun broadcastTransaction(rawTxHex: String): String {
@@ -175,51 +226,51 @@ class BlockchainExplorerApi private constructor(
     /**
      * Get current block height.
      */
-    suspend fun getBlockHeight(): Int {
+    suspend fun getBlockHeight(): Int = withRetry {
         log.d { "GET /blocks/tip/height" }
-        return client.get("$baseUrl/blocks/tip/height").bodyAsText().toInt()
+        client.get("$baseUrl/blocks/tip/height").bodyAsText().toInt()
     }
 
     /**
      * Get block hash at height.
      */
-    suspend fun getBlockHash(height: Int): String {
+    suspend fun getBlockHash(height: Int): String = withRetry {
         log.d { "GET /block-height/$height" }
-        return client.get("$baseUrl/block-height/$height").bodyAsText()
+        client.get("$baseUrl/block-height/$height").bodyAsText()
     }
 
     /**
      * Get block information.
      */
-    suspend fun getBlock(hash: String): ApiBlock {
+    suspend fun getBlock(hash: String): ApiBlock = withRetry {
         log.d { "GET /block/$hash" }
-        return client.get("$baseUrl/block/$hash").body()
+        client.get("$baseUrl/block/$hash").body()
     }
 
     /**
      * Get the 10 most recent blocks, or 10 blocks starting from [startHeight].
      * Returns full block metadata in a single call.
      */
-    suspend fun getBlocks(startHeight: Int? = null): List<ApiBlock> {
+    suspend fun getBlocks(startHeight: Int? = null): List<ApiBlock> = withRetry {
         val url = if (startHeight != null) "$baseUrl/blocks/$startHeight" else "$baseUrl/blocks"
         log.d { "GET /blocks${if (startHeight != null) "/$startHeight" else ""}" }
-        return client.get(url).body()
+        client.get(url).body()
     }
 
     /**
      * Get recommended fee rates.
      */
-    suspend fun getRecommendedFees(): FeeEstimates {
+    suspend fun getRecommendedFees(): FeeEstimates = withRetry {
         log.d { "GET /v1/fees/recommended" }
-        return client.get("$baseUrl/v1/fees/recommended").body()
+        client.get("$baseUrl/v1/fees/recommended").body()
     }
 
     /**
      * Get mempool statistics.
      */
-    suspend fun getMempoolInfo(): MempoolInfo {
+    suspend fun getMempoolInfo(): MempoolInfo = withRetry {
         log.d { "GET /mempool" }
-        return client.get("$baseUrl/mempool").body()
+        client.get("$baseUrl/mempool").body()
     }
 
     fun close() {

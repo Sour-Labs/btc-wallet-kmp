@@ -82,9 +82,10 @@ class BitcoinKit private constructor(
     }
 
     /**
-     * Stop the wallet (stop syncing).
+     * Stop the wallet (stop syncing). Suspends until the sync coroutine has
+     * actually exited.
      */
-    fun stop() {
+    suspend fun stop() {
         log.i { "stop()" }
         syncManager.stop()
     }
