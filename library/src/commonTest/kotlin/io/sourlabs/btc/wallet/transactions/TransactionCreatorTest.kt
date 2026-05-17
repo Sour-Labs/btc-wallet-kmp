@@ -1,6 +1,8 @@
 package io.sourlabs.btc.wallet.transactions
 
 import fr.acinq.bitcoin.ByteVector32
+import io.sourlabs.btc.wallet.api.InvalidAddressException
+import io.sourlabs.btc.wallet.api.InvalidAmountException
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
@@ -16,6 +18,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertContains
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -176,6 +179,99 @@ class TransactionCreatorTest {
             -tx.fee, saved.amount,
             "self-send amount should be -fee only (destination returns to wallet)"
         )
+    }
+
+    // ─── PR-08 regression anchors: up-front transaction validation ───
+
+    @Test
+    fun createRejectsInvalidAddressWithInvalidAddressException() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val ex = assertFailsWith<InvalidAddressException> {
+            f.creator.create("not-a-bitcoin-address", amount = 30_000, feeRate = 1)
+        }
+        assertEquals("not-a-bitcoin-address", ex.address)
+    }
+
+    @Test
+    fun createRejectsZeroAmountWithInvalidAmountException() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        assertFailsWith<InvalidAmountException> {
+            f.creator.create(externalDestination, amount = 0, feeRate = 1)
+        }
+    }
+
+    @Test
+    fun createRejectsNegativeAmountWithInvalidAmountException() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        assertFailsWith<InvalidAmountException> {
+            f.creator.create(externalDestination, amount = -100, feeRate = 1)
+        }
+    }
+
+    @Test
+    fun createRejectsSubDustAmount() = runTest {
+        // P2WPKH dust threshold is 3 × 68 = 204 sats. 100 sats would be network-rejected.
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val ex = assertFailsWith<InvalidAmountException> {
+            f.creator.create(externalDestination, amount = 100, feeRate = 1)
+        }
+        assertTrue(ex.message!!.contains("dust"), "error should mention dust: was ${ex.message}")
+    }
+
+    @Test
+    fun createRejectsZeroFeeRate() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        assertFailsWith<InvalidAmountException> {
+            f.creator.create(externalDestination, amount = 30_000, feeRate = 0)
+        }
+    }
+
+    @Test
+    fun createAllowsSubDustAmountWhenSubtractingFee() = runTest {
+        // When the user opts into subtractFeeFromAmount, sub-dust amounts are
+        // their explicit choice. The validation gate should let it through —
+        // selection / build / signing may still fail downstream (e.g. amount-
+        // minus-fee goes negative), but that's the user's call to make.
+        //
+        // We can't just rely on "the call didn't throw InvalidAmountException"
+        // because real wallets fail later anyway for tiny amounts. Instead,
+        // catch any exception and assert it is NOT InvalidAmountException —
+        // that's the validation regression we'd be guarding against.
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+
+        val outcome = runCatching {
+            f.creator.create(
+                toAddress = externalDestination,
+                amount = 100,  // sub-dust for P2WPKH (294 sats), but...
+                feeRate = 1,
+                subtractFeeFromAmount = true,  // ...subtracting fee means user opted in
+            )
+        }
+        val thrown = outcome.exceptionOrNull()
+        assertTrue(
+            thrown !is InvalidAmountException,
+            "subtractFeeFromAmount=true must bypass the dust gate; instead got " +
+                "${thrown?.let { it::class.simpleName }}: ${thrown?.message}",
+        )
+    }
+
+    @Test
+    fun createSweepRejectsZeroFeeRate() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+        assertFailsWith<InvalidAmountException> {
+            f.creator.createSweep(externalDestination, feeRate = 0)
+        }
     }
 
     @Test

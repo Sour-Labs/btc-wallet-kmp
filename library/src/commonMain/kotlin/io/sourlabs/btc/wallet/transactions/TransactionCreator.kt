@@ -1,6 +1,8 @@
 package io.sourlabs.btc.wallet.transactions
 
 import fr.acinq.bitcoin.Transaction
+import io.sourlabs.btc.wallet.api.InvalidAddressException
+import io.sourlabs.btc.wallet.api.InvalidAmountException
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
@@ -129,13 +131,57 @@ class TransactionCreator(
 
     /**
      * Parse a destination address and return its script type, throwing
-     * [IllegalArgumentException] if invalid. Combines the address-validation
+     * [InvalidAddressException] if invalid. Combines the address-validation
      * step and the script-type lookup so the fee estimator can size the
      * destination output against its real type instead of assuming P2WPKH.
      */
     private fun parseDestinationScriptType(toAddress: String): ScriptType =
         addressConverter.parseAddress(toAddress)?.scriptType
-            ?: throw IllegalArgumentException("Invalid address: $toAddress")
+            ?: throw InvalidAddressException(toAddress)
+
+    /**
+     * Up-front validation shared by [create], [createWithUtxos], and
+     * [createSweep]: bail with [InvalidAmountException] before doing any UTXO
+     * selection or signing work when the request is structurally impossible.
+     *
+     * @param destinationScriptType used to look up the per-script-type dust
+     *   threshold via [FeeCalculator.dustThreshold]. P2PKH outputs are dust
+     *   below ~444 sats; P2WPKH below ~204; etc. Sending a sub-dust amount
+     *   without `subtractFeeFromAmount` produces a network-rejected tx.
+     */
+    private fun validateOutgoing(
+        amount: Long,
+        feeRate: Long,
+        destinationScriptType: ScriptType,
+        subtractFeeFromAmount: Boolean,
+    ) {
+        if (amount <= 0) {
+            throw InvalidAmountException("Amount must be positive, got $amount sats")
+        }
+        if (feeRate < 1) {
+            throw InvalidAmountException(
+                "Fee rate must be at least 1 sat/vB (the standard minimum relay fee), got $feeRate"
+            )
+        }
+        if (!subtractFeeFromAmount) {
+            val dust = FeeCalculator.dustThreshold(destinationScriptType)
+            if (amount < dust) {
+                throw InvalidAmountException(
+                    "Amount $amount sats is below the dust threshold ($dust sats) for a $destinationScriptType " +
+                        "output — the network will reject this transaction. Send at least $dust sats, or set " +
+                        "subtractFeeFromAmount = true to take the fee out of the destination amount."
+                )
+            }
+        }
+    }
+
+    private fun validateSweep(feeRate: Long) {
+        if (feeRate < 1) {
+            throw InvalidAmountException(
+                "Fee rate must be at least 1 sat/vB (the standard minimum relay fee), got $feeRate"
+            )
+        }
+    }
     private val signer: TransactionSigner? = if (!hdWalletManager.isWatchOnly) {
         TransactionSigner(hdWalletManager)
     } else {
@@ -212,6 +258,7 @@ class TransactionCreator(
         strategy: SelectionStrategy = SelectionStrategy.AUTOMATIC
     ): SendInfo? {
         val destinationScriptType = parseDestinationScriptType(toAddress)
+        validateOutgoing(amount, feeRate, destinationScriptType, subtractFeeFromAmount = false)
         val spendableUtxos = utxoProvider.getSpendableUtxos()
         val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy)
             ?: return null
@@ -245,6 +292,7 @@ class TransactionCreator(
         subtractFeeFromAmount: Boolean = false
     ): CreatedTransaction {
         val destinationScriptType = parseDestinationScriptType(toAddress)
+        validateOutgoing(amount, feeRate, destinationScriptType, subtractFeeFromAmount)
 
         require(signer != null) { "Cannot create signed transactions with a watch-only wallet" }
 
@@ -312,6 +360,7 @@ class TransactionCreator(
         subtractFeeFromAmount: Boolean = false
     ): CreatedTransaction {
         val destinationScriptType = parseDestinationScriptType(toAddress)
+        validateOutgoing(amount, feeRate, destinationScriptType, subtractFeeFromAmount)
 
         require(signer != null) { "Cannot create signed transactions with a watch-only wallet" }
 
@@ -372,6 +421,7 @@ class TransactionCreator(
         // Validate up front; buildSweep also parses but throwing here makes the
         // failure surface adjacent to the user-facing API.
         parseDestinationScriptType(toAddress)
+        validateSweep(feeRate)
 
         require(signer != null) { "Cannot create signed transactions with a watch-only wallet" }
 
@@ -420,6 +470,7 @@ class TransactionCreator(
         subtractFeeFromAmount: Boolean = false
     ): UnsignedTransaction {
         val destinationScriptType = parseDestinationScriptType(toAddress)
+        validateOutgoing(amount, feeRate, destinationScriptType, subtractFeeFromAmount)
 
         // Get spendable UTXOs
         val spendableUtxos = utxoProvider.getSpendableUtxos()
