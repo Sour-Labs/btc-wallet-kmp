@@ -1,13 +1,13 @@
 package io.sourlabs.btc.wallet.sync
 
 import co.touchlab.kermit.Logger
+import io.sourlabs.btc.wallet.api.ScanException
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
 import io.sourlabs.btc.wallet.models.ScriptType
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlin.coroutines.cancellation.CancellationException
 
 private val log = Logger.withTag("MultiPurposeScanner")
 
@@ -57,37 +57,25 @@ data class ScanProgress(
 /**
  * Scans multiple BIP purposes to discover existing wallet funds during restoration.
  * This is essential for wallets that may have been used with different address types.
+ *
+ * Failure handling: each address probe (gap-limit walk) is allowed to fail up to
+ * [maxConsecutiveFailures] times in a row before the scan aborts with [ScanException].
+ * A partial scan result would be indistinguishable from "no activity" — callers can't
+ * tell if absent funds mean "never funded" or "API was down" — so we bail loudly.
+ *
+ * Individual GET retries (transient 5xx / network blips) are already handled inside
+ * [BlockchainExplorerApi.withRetry]; failures that reach this layer have already
+ * burned the retry budget.
  */
 class MultiPurposeScanner(
     private val seed: ByteArray,
     private val network: Network,
     private val api: BlockchainExplorerApi,
-    private val gapLimit: Int = 20
+    private val gapLimit: Int = 20,
+    private val maxConsecutiveFailures: Int = 3,
 ) {
     /**
-     * Scan all standard purposes to discover wallet activity.
-     * @return Flow of progress updates, completing with final scan result
-     */
-    fun scan(): Flow<ScanProgress> = flow {
-        val purposes = Purpose.allPurposes
-        val results = mutableListOf<PurposeScanResult>()
-
-        for ((index, purpose) in purposes.withIndex()) {
-            val result = scanPurpose(purpose) { chain, keyIndex ->
-                emit(ScanProgress(
-                    currentPurpose = purpose,
-                    currentChain = chain,
-                    currentIndex = keyIndex,
-                    totalPurposes = purposes.size,
-                    completedPurposes = index
-                ))
-            }
-            results.add(result)
-        }
-    }
-
-    /**
-     * Perform a full scan and return the result directly.
+     * Perform a full scan across every standard purpose.
      */
     suspend fun scanAll(): WalletScanResult {
         val purposes = Purpose.allPurposes
@@ -115,7 +103,9 @@ class MultiPurposeScanner(
     }
 
     /**
-     * Scan a specific purpose.
+     * Scan a specific purpose. Walks each chain to the gap limit; aborts the
+     * whole scan with [ScanException] if a chain hits [maxConsecutiveFailures]
+     * consecutive API failures.
      */
     suspend fun scanPurpose(
         purpose: Purpose,
@@ -126,84 +116,98 @@ class MultiPurposeScanner(
         val addressConverter = AddressConverter(network)
         val scriptType = ScriptType.fromPurpose(purpose)
 
-        var externalUsed = 0
-        var internalUsed = 0
-        var totalBalance = 0L
-        var txCount = 0
-
-        // Scan external chain
-        var consecutiveEmpty = 0
-        var index = 0
-        while (consecutiveEmpty < gapLimit) {
-            onProgress("external", index)
-
-            val publicKey = hdWallet.derivePublicKey(isExternal = true, index = index)
-            val address = addressConverter.toAddress(publicKey, scriptType)
-
-            try {
-                val addressInfo = api.getAddress(address)
-                val totalTxCount = addressInfo.chainStats.txCount + addressInfo.mempoolStats.txCount
-
-                if (totalTxCount > 0) {
-                    externalUsed = index + 1
-                    txCount += totalTxCount
-                    consecutiveEmpty = 0
-
-                    // Get UTXOs for balance
-                    val utxos = api.getAddressUtxos(address)
-                    totalBalance += utxos.sumOf { it.value }
-                } else {
-                    consecutiveEmpty++
-                }
-            } catch (_: Exception) {
-                consecutiveEmpty++
-            }
-
-            index++
-        }
-
-        // Scan internal chain (change addresses)
-        consecutiveEmpty = 0
-        index = 0
-        while (consecutiveEmpty < gapLimit) {
-            onProgress("internal", index)
-
-            val publicKey = hdWallet.derivePublicKey(isExternal = false, index = index)
-            val address = addressConverter.toAddress(publicKey, scriptType)
-
-            try {
-                val addressInfo = api.getAddress(address)
-                val totalTxCount = addressInfo.chainStats.txCount + addressInfo.mempoolStats.txCount
-
-                if (totalTxCount > 0) {
-                    internalUsed = index + 1
-                    txCount += totalTxCount
-                    consecutiveEmpty = 0
-
-                    // Get UTXOs for balance
-                    val utxos = api.getAddressUtxos(address)
-                    totalBalance += utxos.sumOf { it.value }
-                } else {
-                    consecutiveEmpty++
-                }
-            } catch (_: Exception) {
-                consecutiveEmpty++
-            }
-
-            index++
-        }
+        val external = scanChain(hdWallet, addressConverter, scriptType, purpose, isExternal = true, onProgress)
+        val internal = scanChain(hdWallet, addressConverter, scriptType, purpose, isExternal = false, onProgress)
 
         log.i {
-            "scanPurpose($purpose) — done: externalUsed=$externalUsed, internalUsed=$internalUsed, " +
-                "txCount=$txCount, balance=$totalBalance sat"
+            "scanPurpose($purpose) — done: externalUsed=${external.usedCount}, internalUsed=${internal.usedCount}, " +
+                "txCount=${external.txCount + internal.txCount}, balance=${external.balance + internal.balance} sat"
         }
         return PurposeScanResult(
             purpose = purpose,
-            externalAddressesUsed = externalUsed,
-            internalAddressesUsed = internalUsed,
-            balance = totalBalance,
-            transactionCount = txCount
+            externalAddressesUsed = external.usedCount,
+            internalAddressesUsed = internal.usedCount,
+            balance = external.balance + internal.balance,
+            transactionCount = external.txCount + internal.txCount,
         )
+    }
+
+    private data class ChainScanResult(
+        val usedCount: Int,
+        val balance: Long,
+        val txCount: Int,
+    )
+
+    private suspend fun scanChain(
+        hdWallet: HDWalletManager,
+        addressConverter: AddressConverter,
+        scriptType: ScriptType,
+        purpose: Purpose,
+        isExternal: Boolean,
+        onProgress: suspend (chain: String, index: Int) -> Unit,
+    ): ChainScanResult {
+        val chainLabel = if (isExternal) "external" else "internal"
+        var usedCount = 0
+        var balance = 0L
+        var txCount = 0
+
+        var consecutiveEmpty = 0
+        var consecutiveFailures = 0
+        var index = 0
+
+        while (consecutiveEmpty < gapLimit) {
+            onProgress(chainLabel, index)
+            val publicKey = hdWallet.derivePublicKey(isExternal = isExternal, index = index)
+            val address = addressConverter.toAddress(publicKey, scriptType)
+
+            val outcome = try {
+                probeAddress(address).also { consecutiveFailures = 0 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                consecutiveFailures++
+                if (consecutiveFailures >= maxConsecutiveFailures) {
+                    throw ScanException(
+                        "scanPurpose($purpose) aborted: $consecutiveFailures consecutive API failures " +
+                            "on $chainLabel chain at index $index. The partial scan is discarded — " +
+                            "wallet may still have funds. Retry the scan when the explorer is reachable.",
+                        cause = e,
+                    )
+                }
+                log.w(e) {
+                    "scanPurpose($purpose) $chainLabel[$index] failed " +
+                        "($consecutiveFailures/$maxConsecutiveFailures); counting as empty and continuing"
+                }
+                // Count toward gap so a persistent partial outage eventually halts the walk
+                // (capped above) rather than looping forever on alternating failure/success.
+                AddressProbe.Empty
+            }
+
+            when (outcome) {
+                is AddressProbe.Active -> {
+                    usedCount = index + 1
+                    txCount += outcome.txCount
+                    balance += outcome.balance
+                    consecutiveEmpty = 0
+                }
+                AddressProbe.Empty -> consecutiveEmpty++
+            }
+            index++
+        }
+        return ChainScanResult(usedCount, balance, txCount)
+    }
+
+    private sealed interface AddressProbe {
+        data class Active(val txCount: Int, val balance: Long) : AddressProbe
+        data object Empty : AddressProbe
+    }
+
+    private suspend fun probeAddress(address: String): AddressProbe {
+        val addressInfo = api.getAddress(address)
+        val totalTxCount = addressInfo.chainStats.txCount + addressInfo.mempoolStats.txCount
+        if (totalTxCount == 0) return AddressProbe.Empty
+        val utxos = api.getAddressUtxos(address)
+        return AddressProbe.Active(txCount = totalTxCount, balance = utxos.sumOf { it.value })
     }
 
     /**

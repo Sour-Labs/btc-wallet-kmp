@@ -33,6 +33,16 @@ class SyncException(
 ) : WalletException(message, cause)
 
 /**
+ * Exception thrown when a wallet restoration scan aborts after too many
+ * consecutive API failures. The scan result up to that point is discarded —
+ * a partial scan can't be trusted to tell "no funds" from "incomplete scan."
+ */
+class ScanException(
+    message: String,
+    cause: Throwable? = null
+) : WalletException(message, cause)
+
+/**
  * Exception thrown when broadcast fails.
  */
 class BroadcastException(
