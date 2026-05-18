@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Publish to Maven Local only (skip Central upload)'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # macOS runner is required: a full KMP publication includes the iOS
+    # klibs, which can only be built on macOS.
+    name: Publish to Maven Central
+    runs-on: macos-latest
+    permissions:
+      # contents: write is needed for the GitHub Release creation step.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify tag matches library version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          GRADLE_VERSION=$(grep -E '^version = ' library/build.gradle.kts | sed -E 's/version = "(.*)"/\1/')
+          if [ "$TAG_VERSION" != "$GRADLE_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match library/build.gradle.kts version ($GRADLE_VERSION)" >&2
+            exit 1
+          fi
+
+      - name: Publish to Maven Local (dry run)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true' }}
+        run: ./gradlew publishToMavenLocal --no-configuration-cache
+
+      - name: Publish and release to Maven Central
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true' }}
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: ./gradlew publishAndReleaseToMavenCentral --no-configuration-cache
+
+      - name: Extract changelog section for this release
+        if: startsWith(github.ref, 'refs/tags/v')
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Print everything between `## [VERSION]` and the next `## [` header.
+          # Trailing blank lines are trimmed.
+          awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (found) exit
+              if ($0 ~ "^## \\[" ver "\\]") { found=1; next }
+            }
+            found { print }
+          ' CHANGELOG.md | awk 'NF {p=1} p' | awk '
+            { lines[NR]=$0 }
+            END {
+              last=NR
+              while (last > 0 && lines[last] ~ /^[[:space:]]*$/) last--
+              for (i=1; i<=last; i++) print lines[i]
+            }
+          ' > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No changelog section found for version $VERSION — did you forget to promote [Unreleased] in CHANGELOG.md?" >&2
+            exit 1
+          fi
+          echo "Extracted release notes:"
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            --verify-tag
