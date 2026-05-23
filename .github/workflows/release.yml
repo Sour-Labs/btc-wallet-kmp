@@ -15,6 +15,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# Opt actions/checkout, actions/setup-java, and gradle/actions/setup-gradle
+# into Node 24 ahead of GitHub's 2026-06-02 forced switch. Once Node 24 is
+# the runner default this env var is a no-op and can be removed.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   publish:
     # macOS runner is required: a full KMP publication includes the iOS
