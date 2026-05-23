@@ -59,17 +59,22 @@ jobs:
         run: ./gradlew publishAndReleaseToMavenCentral --no-configuration-cache
 
       - name: Extract changelog section for this release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') }}
         id: changelog
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Print everything between `## [VERSION]` and the next `## [` header.
-          # Trailing blank lines are trimmed.
+          # Print everything between `## [VERSION]` and either the next `## [`
+          # header or the Keep a Changelog reference-style link definitions at
+          # the end of the file (`[Unreleased]: https://...`). Header is
+          # matched as a literal string via index() so dots in the version
+          # aren't treated as regex wildcards. Leading/trailing blank lines
+          # are trimmed by the two follow-up awk stages.
           awk -v ver="$VERSION" '
             /^## \[/ {
               if (found) exit
-              if ($0 ~ "^## \\[" ver "\\]") { found=1; next }
+              if (index($0, "## [" ver "]") == 1) { found=1; next }
             }
+            found && /^\[[^]]+\]:[[:space:]]/ { exit }
             found { print }
           ' CHANGELOG.md | awk 'NF {p=1} p' | awk '
             { lines[NR]=$0 }
@@ -87,7 +92,7 @@ jobs:
           cat release-notes.md
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
