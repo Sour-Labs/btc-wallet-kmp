@@ -59,10 +59,15 @@ jobs:
         env:
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
-          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.SIGNING_KEY }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
-        run: ./gradlew publishAndReleaseToMavenCentral --no-configuration-cache
+        run: |
+          # Accept both a real multi-line armored key and a \n-escaped one.
+          SIGNING_KEY_NORMALIZED="${SIGNING_KEY//$'\r'/}"
+          SIGNING_KEY_NORMALIZED="${SIGNING_KEY_NORMALIZED//\\n/$'\n'}"
+          ORG_GRADLE_PROJECT_signingInMemoryKey="$SIGNING_KEY_NORMALIZED" \
+            ./gradlew publishAndReleaseToMavenCentral --no-configuration-cache
 
       - name: Extract changelog section for this release
         if: ${{ startsWith(github.ref, 'refs/tags/v') && (github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true') }}

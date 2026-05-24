@@ -63,7 +63,7 @@ In the repo settings → **Secrets and variables** → **Actions**, add:
 |--------|-------|
 | `MAVEN_CENTRAL_USERNAME` | Central Portal user token username |
 | `MAVEN_CENTRAL_PASSWORD` | Central Portal user token password |
-| `SIGNING_KEY` | Full contents of `signing-key.asc` (including the `-----BEGIN PGP PRIVATE KEY BLOCK-----` lines) |
+| `SIGNING_KEY` | Full contents of `signing-key.asc` (including the `-----BEGIN PGP PRIVATE KEY BLOCK-----` lines). `\n`-escaped content also works. |
 | `SIGNING_KEY_ID` | The last 8 hex chars of the key ID (or the full long ID) |
 | `SIGNING_KEY_PASSWORD` | The passphrase you set when generating the key |
 
@@ -136,6 +136,9 @@ publication can only be built on macOS.
 - **"PGP signature verification failed".** The public key hasn't propagated
   to the keyserver Central checks yet. Re-send to `keyserver.ubuntu.com` and
   `keys.openpgp.org`, wait ~10 minutes, and re-run the workflow.
+- **"Could not read PGP secret key".** The `SIGNING_KEY` secret is malformed.
+  Re-export the ASCII-armored private key (`gpg --armor --export-secret-keys
+  ...`) and store either the raw multi-line key or a `\n`-escaped equivalent.
 - **"Namespace not allowed".** The Sonatype namespace claim either hasn't
   been verified or doesn't match the `group` in `library/build.gradle.kts`.
 - **iOS targets missing from the publication.** The release job ran on a
