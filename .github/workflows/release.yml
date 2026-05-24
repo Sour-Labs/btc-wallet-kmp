@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Publish to Maven Local only (skip Central upload)'
+        description: 'Sign + publish to Maven Local only (skip Central upload)'
         required: false
         default: 'false'
 
@@ -51,8 +51,24 @@ jobs:
           fi
 
       - name: Publish to Maven Local (dry run)
+        # Exercises the same signing path as the real publish so dry-run
+        # catches signing issues (bad SIGNING_KEY format, BouncyCastle
+        # incompatibility with newer GPG exports, etc.) without uploading
+        # anything to Central. The signing block in library/build.gradle.kts
+        # activates whenever ORG_GRADLE_PROJECT_signingInMemoryKey is set,
+        # regardless of the publish target.
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true' }}
-        run: ./gradlew publishToMavenLocal --no-configuration-cache
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyId: ${{ secrets.SIGNING_KEY_ID }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          # Same normalization as the real-publish step — accept both a real
+          # multi-line armored key and a \n-escaped one.
+          SIGNING_KEY_NORMALIZED="${SIGNING_KEY//$'\r'/}"
+          SIGNING_KEY_NORMALIZED="${SIGNING_KEY_NORMALIZED//\\n/$'\n'}"
+          ORG_GRADLE_PROJECT_signingInMemoryKey="$SIGNING_KEY_NORMALIZED" \
+            ./gradlew publishToMavenLocal --no-configuration-cache
 
       - name: Publish and release to Maven Central
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.dry_run != 'true' }}
