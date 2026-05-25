@@ -8,6 +8,10 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.4.0] - 2026-05-24
+
 First public release. Earlier `0.x` versions were never published to a public
 repository, so this entry captures the API as it stands at the first Maven
 Central upload.
@@ -79,4 +83,5 @@ Central upload.
   in distributed client binaries — anyone with the APK/IPA can extract it.
   Production setups should proxy through a backend.
 
-[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/main...HEAD
+[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Sour-Labs/btc-wallet-kmp/releases/tag/v0.4.0
