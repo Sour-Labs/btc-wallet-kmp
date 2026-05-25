@@ -1,5 +1,7 @@
 # Bitcoin Wallet KMP Library
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.sourlabs.btc/library.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/io.sourlabs.btc/library)
+
 A Kotlin Multiplatform library for managing Bitcoin wallets. Provides a high-level API for wallet operations including HD key derivation, address generation, UTXO management, transaction creation, and blockchain synchronization.
 
 Built on top of [ACINQ's bitcoin-kmp](https://github.com/ACINQ/bitcoin-kmp) library.
