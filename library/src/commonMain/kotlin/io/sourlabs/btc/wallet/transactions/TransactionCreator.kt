@@ -227,7 +227,7 @@ class TransactionCreator(
         // the sync's "skip if txid exists" path in TransactionProcessor never
         // gets a chance to fix it.
         val walletScripts: List<ByteArray> = publicKeyManager.getAllPublicKeys()
-            .map { addressConverter.createScriptPubKey(it.publicKey, it.scriptType) }
+            .map { addressConverter.createScriptPubKey(it) }
         val outputAmount = signedTx.txOut.sumOf { out ->
             val outScript = out.publicKeyScript.toByteArray()
             if (walletScripts.any { it.contentEquals(outScript) }) out.amount.toLong() else 0L

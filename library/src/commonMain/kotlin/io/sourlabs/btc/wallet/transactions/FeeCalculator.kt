@@ -34,7 +34,8 @@ internal object FeeCalculator {
         ScriptType.P2SH,
         ScriptType.P2SH_P2WPKH -> 32      // 8 + 1 + 23 (OP_HASH160 <20> OP_EQUAL)
         ScriptType.P2WPKH -> 31           // 8 + 1 + 22 (OP_0 <20>)
-        ScriptType.P2TR -> 43             // 8 + 1 + 34 (OP_1 <32>)
+        ScriptType.P2TR,
+        ScriptType.P2WSH -> 43            // 8 + 1 + 34 (OP_0 / OP_1 + 32-byte program)
     }
 
     /**
@@ -72,6 +73,11 @@ internal object FeeCalculator {
                 }
                 ScriptType.P2SH -> error(
                     "Cannot estimate vsize for generic P2SH input — wallet keys must be tagged P2SH_P2WPKH"
+                )
+                ScriptType.P2WSH -> error(
+                    "Cannot estimate vsize for P2WSH input from script type alone — multisig spend " +
+                        "size depends on threshold M and signature count. Multisig wallets are " +
+                        "currently watch-only; this path should be unreachable."
                 )
             }
         }
@@ -119,9 +125,11 @@ internal object FeeCalculator {
             ScriptType.P2PKH,
             ScriptType.P2SH,
             ScriptType.P2SH_P2WPKH -> 148
-            // Witness outputs: Bitcoin Core uses a uniform 67-vbyte spending input.
+            // Witness outputs: Bitcoin Core uses a uniform 67-vbyte spending input
+            // regardless of program contents (P2WPKH, P2WSH, P2TR all 67).
             ScriptType.P2WPKH,
-            ScriptType.P2TR -> 67
+            ScriptType.P2TR,
+            ScriptType.P2WSH -> 67
         }
         return (outputVSize(scriptType) + spendingInputVSize) * dustRelayFeeSatPerVb
     }

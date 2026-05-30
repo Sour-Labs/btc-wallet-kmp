@@ -3,9 +3,13 @@ package io.sourlabs.btc.wallet.api
 import co.touchlab.kermit.Logger
 import io.sourlabs.btc.wallet.core.SyncConfig
 import io.sourlabs.btc.wallet.core.WalletConfig
+import io.sourlabs.btc.wallet.descriptors.OutputDescriptor
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
+import io.sourlabs.btc.wallet.keys.HdWalletKeySource
+import io.sourlabs.btc.wallet.keys.MultisigKeySource
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
+import io.sourlabs.btc.wallet.keys.WalletKeySource
 import io.sourlabs.btc.wallet.models.*
 import io.sourlabs.btc.wallet.storage.InMemoryWalletStorage
 import io.sourlabs.btc.wallet.storage.WalletStorage
@@ -369,14 +373,31 @@ class BitcoinKit private constructor(
             return this
         }
 
+        private fun buildKeySource(
+            config: WalletConfig,
+            hdWalletManager: HDWalletManager,
+        ): WalletKeySource = when (config) {
+            is WalletConfig.WatchOnlyDescriptor -> when (val parsed = config.parsedOutputDescriptor) {
+                is OutputDescriptor.SingleKey -> HdWalletKeySource(hdWalletManager)
+                is OutputDescriptor.Multisig -> MultisigKeySource(parsed.descriptor)
+            }
+            // Single-key non-descriptor configs (mnemonic / seed / xprv / xpub)
+            // all use the standard HD derivation strategy.
+            is WalletConfig.FromMnemonic,
+            is WalletConfig.FromSeed,
+            is WalletConfig.FromExtendedPrivateKey,
+            is WalletConfig.WatchOnly -> HdWalletKeySource(hdWalletManager)
+        }
+
         /**
          * Build the BitcoinKit instance.
          */
         fun build(): BitcoinKit {
             val hdWalletManager = HDWalletManager.fromConfig(walletConfig)
+            val keySource: WalletKeySource = buildKeySource(walletConfig, hdWalletManager)
             val addressConverter = AddressConverter(walletConfig.network)
             val publicKeyManager = PublicKeyManager(
-                hdWalletManager = hdWalletManager,
+                keySource = keySource,
                 storage = storage.publicKeyStorage,
                 gapLimit = walletConfig.gapLimit
             )

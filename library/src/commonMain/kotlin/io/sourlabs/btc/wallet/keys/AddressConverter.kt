@@ -20,13 +20,30 @@ open class AddressConverter(
 
     /**
      * Convert a wallet public key to its corresponding address.
+     *
+     * When [WalletPublicKey.scriptPubKey] is non-null (multisig P2WSH entries),
+     * the address is recovered from the stored scriptPubKey directly. Otherwise
+     * the address is derived from the embedded public key and script type the
+     * way it always has been for single-key wallets.
      */
     fun toAddress(walletPublicKey: WalletPublicKey): String {
+        val overrideScript = walletPublicKey.scriptPubKey
+        if (overrideScript != null) {
+            return addressToScriptPubKeyReverse(overrideScript)
+                ?: throw IllegalStateException(
+                    "Failed to recover address from stored scriptPubKey for path ${walletPublicKey.path}"
+                )
+        }
         return toAddress(walletPublicKey.publicKey, walletPublicKey.scriptType)
     }
 
     /**
      * Convert a public key to an address for the given script type.
+     *
+     * P2WSH is intentionally not supported here — a P2WSH address depends on a
+     * full redeem script (multisig, miniscript, …), not a single public key.
+     * The multisig watch-only path goes through [toAddress] with a
+     * [WalletPublicKey] that carries its own [WalletPublicKey.scriptPubKey].
      */
     fun toAddress(publicKey: PublicKey, scriptType: ScriptType): String {
         return when (scriptType) {
@@ -38,6 +55,21 @@ open class AddressConverter(
                 "Cannot derive an address for generic P2SH from a public key alone — a P2SH " +
                     "address requires a redeem script. Use P2SH_P2WPKH for nested-SegWit keys."
             )
+            ScriptType.P2WSH -> throw IllegalArgumentException(
+                "Cannot derive an address for P2WSH from a public key alone — pass a WalletPublicKey " +
+                    "with a non-null scriptPubKey (set by MultisigKeySource) to toAddress(WalletPublicKey) instead."
+            )
+        }
+    }
+
+    private fun addressToScriptPubKeyReverse(scriptPubKey: ByteArray): String? {
+        val parsed = Script.parse(scriptPubKey)
+        val result = Bitcoin.addressFromPublicKeyScript(chainHash, parsed)
+        return if (result.isRight) {
+            @Suppress("UNCHECKED_CAST")
+            (result as fr.acinq.bitcoin.utils.Either.Right<String>).value
+        } else {
+            null
         }
     }
 
@@ -101,6 +133,7 @@ open class AddressConverter(
                 // in TransactionProcessor.findByScriptPubKey.
                 Script.isPay2sh(scriptBytes) -> ScriptType.P2SH
                 Script.isPay2wpkh(scriptBytes) -> ScriptType.P2WPKH
+                Script.isPay2wsh(scriptBytes) -> ScriptType.P2WSH
                 Script.isPay2tr(scriptBytes) -> ScriptType.P2TR
                 else -> return null
             }
@@ -157,9 +190,23 @@ open class AddressConverter(
                 "Cannot derive a scriptPubKey for generic P2SH from a public key alone — " +
                     "wallet-owned nested-SegWit keys must be tagged P2SH_P2WPKH."
             )
+            ScriptType.P2WSH -> throw IllegalArgumentException(
+                "Cannot derive a scriptPubKey for P2WSH from a public key alone — " +
+                    "use createScriptPubKey(walletPublicKey) on a WalletPublicKey whose " +
+                    "scriptPubKey field was populated by MultisigKeySource."
+            )
         }
         return Script.write(script)
     }
+
+    /**
+     * Get the scriptPubKey for a [WalletPublicKey] — short-circuits to the
+     * stored override when present (multisig), falls back to deriving from
+     * [WalletPublicKey.publicKey] + [WalletPublicKey.scriptType] otherwise.
+     */
+    open fun createScriptPubKey(walletPublicKey: WalletPublicKey): ByteArray =
+        walletPublicKey.scriptPubKey
+            ?: createScriptPubKey(walletPublicKey.publicKey, walletPublicKey.scriptType)
 
     /**
      * Get the address prefix for the given purpose and network.

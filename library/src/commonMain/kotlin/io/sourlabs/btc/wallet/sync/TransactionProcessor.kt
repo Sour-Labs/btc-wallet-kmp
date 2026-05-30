@@ -265,7 +265,7 @@ class TransactionProcessor(
         val keys = publicKeyManager.getAllPublicKeys()
         walletKeysByPubKeyHash = keys.associateBy { it.publicKeyHash.toHexKey() }
         walletKeysByScriptPubKey = keys.associateBy {
-            addressConverter.createScriptPubKey(it.publicKey, it.scriptType).toHexKey()
+            addressConverter.createScriptPubKey(it).toHexKey()
         }
     }
 
@@ -298,10 +298,13 @@ class TransactionProcessor(
             }
             // P2SH and its wrapped variants put the hash160 of the redeem script
             // (not the pubkey) into the scriptPubKey; P2TR puts the tweaked
-            // x-only pubkey. Neither yields a direct pubkey hash to look up.
+            // x-only pubkey; P2WSH puts the sha256 of the witness script. None
+            // of these yield a direct pubkey hash to look up — fall through to
+            // the scriptPubKey-bytes index instead.
             ScriptType.P2SH,
             ScriptType.P2SH_P2WPKH,
-            ScriptType.P2TR -> null
+            ScriptType.P2TR,
+            ScriptType.P2WSH -> null
         }
     }
 

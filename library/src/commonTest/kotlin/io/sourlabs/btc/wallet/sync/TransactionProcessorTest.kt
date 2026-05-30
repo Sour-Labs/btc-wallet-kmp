@@ -3,6 +3,7 @@ package io.sourlabs.btc.wallet.sync
 import fr.acinq.bitcoin.PublicKey
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
+import io.sourlabs.btc.wallet.keys.HdWalletKeySource
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
@@ -41,7 +42,7 @@ class TransactionProcessorTest {
         val hd = HDWalletManager.fromMnemonic(testMnemonic, "", Purpose.BIP49, Network.MAINNET)
         val converter = AddressConverter(Network.MAINNET)
         val storage = InMemoryWalletStorage()
-        val pkm = PublicKeyManager(hd, storage.publicKeyStorage, gapLimit = 5)
+        val pkm = PublicKeyManager(HdWalletKeySource(hd), storage.publicKeyStorage, gapLimit = 5)
         pkm.initialize()
 
         val externalKey0 = pkm.getExternalPublicKeys().sortedBy { it.index }.first()
@@ -129,7 +130,7 @@ class TransactionProcessorTest {
         val hd = HDWalletManager.fromMnemonic(testMnemonic, "", Purpose.BIP49, Network.MAINNET)
         val converter = CountingAddressConverter(Network.MAINNET)
         val storage = InMemoryWalletStorage()
-        val pkm = PublicKeyManager(hd, storage.publicKeyStorage, gapLimit = 20)
+        val pkm = PublicKeyManager(HdWalletKeySource(hd), storage.publicKeyStorage, gapLimit = 20)
         pkm.initialize()  // fills 20 external + 20 internal keys
 
         val totalKeys = pkm.getAllPublicKeys().size
