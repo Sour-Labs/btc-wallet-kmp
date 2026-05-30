@@ -10,6 +10,70 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 _No changes yet._
 
+## [0.5.0] - 2026-05-29
+
+### Added
+
+- Watch-only support for `wsh(sortedmulti(M, KEY1, ..., KEYN))` BIP-380 multisig
+  descriptors — the format Bitkey, Sparrow, BlueWallet, and most hardware-
+  multisig wallets emit. `WalletConfig.WatchOnlyDescriptor` now accepts these
+  alongside single-key descriptors; `BitcoinKit` derives the correct P2WSH
+  receive/change addresses and syncs them through the existing gap-limit
+  scanner.
+- New `MultisigDescriptor` sealed type with a `WshSortedMulti` variant, parsed
+  via `MultisigDescriptor.parse(...)` or the new unified
+  `OutputDescriptor.parse(...)` entry point that handles both single-key and
+  multisig flavours.
+- New `MultisigAddressDeriver` for computing the P2WSH address of an M-of-N
+  cosigner set at a given `(change, index)` pair (BIP-67 lexicographic sort +
+  BIP-141 P2WSH wrapping). Exposes an internal `deriveScripts(...)` helper
+  that surfaces all the intermediate byte arrays so `MultisigKeySource` can
+  share the same sort / script construction path with no duplication.
+- New `WalletKeySource` abstraction in `keys/` so `PublicKeyManager` can switch
+  between single-key (`HdWalletKeySource`) and multisig (`MultisigKeySource`)
+  derivation strategies. Single-key behaviour is preserved verbatim.
+- `ScriptType.P2WSH` variant. `AddressConverter.parseAddress` now recognises
+  62-character `bc1q...` / `tb1q...` P2WSH bech32 addresses on the destination
+  side.
+
+### Changed
+
+- `PublicKeyManager`'s constructor now takes a `WalletKeySource` instead of an
+  `HDWalletManager` directly. Consumers using the public `BitcoinKit.builder(...)`
+  API are unaffected. Callers constructing `PublicKeyManager` themselves —
+  primarily internal tests — must wrap their `HDWalletManager` in
+  `HdWalletKeySource(...)`.
+- `WalletConfig.WatchOnlyDescriptor.parsedDescriptor` (the legacy single-key
+  accessor) now throws `IllegalStateException` when the parsed descriptor is
+  multisig. Callers that need to handle both flavours should read the new
+  `parsedOutputDescriptor: OutputDescriptor` field and pattern-match the
+  sum type.
+- `WalletPublicKey` gains optional `scriptPubKey: ByteArray?` and
+  `scriptTypeOverride: ScriptType?` fields. When set (currently only by
+  `MultisigKeySource`) they take precedence over the legacy
+  derive-from-pubkey-and-purpose path so address resolution and on-chain
+  matching work for outputs where a single pubkey can't reconstruct the
+  script.
+- `AddressConverter.createScriptPubKey(WalletPublicKey)` overload added —
+  short-circuits to the stored `scriptPubKey` when present and falls back to
+  the legacy derivation otherwise. The legacy
+  `createScriptPubKey(PublicKey, ScriptType)` and `toAddress(PublicKey, ScriptType)`
+  overloads now throw on `P2WSH` since a single pubkey can't produce a P2WSH
+  script.
+- The `wsh()` rejection message from `Descriptor.parse` now points callers at
+  `MultisigDescriptor.parse` / `OutputDescriptor.parse` instead of a generic
+  "not supported."
+
+### Notes for multisig users
+
+- Multisig support is **watch-only**. `kit.send(...)` and
+  `kit.createTransaction(...)` throw on multisig wallets — there is no PSBT
+  export flow yet, so signing must happen on the hardware wallet itself.
+- Only `wsh(sortedmulti(...))` is accepted. Bare `multi(...)`,
+  `wsh(multi(...))` (unsorted), and `wsh(...)` wrapping miniscript are
+  rejected with a typed `DescriptorException.Unsupported` that points the
+  caller at the canonical sortedmulti form.
+
 ## [0.4.0] - 2026-05-24
 
 First public release. Earlier `0.x` versions were never published to a public
@@ -83,5 +147,6 @@ Central upload.
   in distributed client binaries — anyone with the APK/IPA can extract it.
   Production setups should proxy through a backend.
 
-[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Sour-Labs/btc-wallet-kmp/releases/tag/v0.4.0
