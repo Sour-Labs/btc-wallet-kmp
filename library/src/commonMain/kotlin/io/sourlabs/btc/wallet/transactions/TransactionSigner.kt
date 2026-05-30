@@ -62,6 +62,13 @@ class TransactionSigner(
             // generates P2SH_P2WPKH for nested SegWit. Reaching here means the key
             // was tagged wrong.
             ScriptType.P2SH -> error("Cannot sign generic P2SH input — wallet keys must be P2SH_P2WPKH")
+            // P2WSH inputs come from multisig watch-only wallets. The signer is
+            // never constructed for those (the require(!isWatchOnly) at line 16
+            // throws first) — if we somehow get here, it's a programming error.
+            ScriptType.P2WSH -> error(
+                "Cannot sign P2WSH input from this wallet — multisig signing requires N cosigner " +
+                    "signatures and is not implemented. Watch-only multisig wallets cannot send."
+            )
         }
     }
 

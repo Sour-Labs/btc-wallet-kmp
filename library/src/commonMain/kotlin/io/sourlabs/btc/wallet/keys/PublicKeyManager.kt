@@ -1,8 +1,5 @@
 package io.sourlabs.btc.wallet.keys
 
-import fr.acinq.bitcoin.Crypto
-import fr.acinq.bitcoin.PublicKey
-import io.sourlabs.btc.wallet.models.Purpose
 import io.sourlabs.btc.wallet.models.WalletPublicKey
 import io.sourlabs.btc.wallet.storage.PublicKeyStorage
 
@@ -10,9 +7,14 @@ import io.sourlabs.btc.wallet.storage.PublicKeyStorage
  * Manages the pool of public keys for the wallet with gap limit support.
  * Ensures there are always [gapLimit] unused keys available in both
  * external (receive) and internal (change) chains.
+ *
+ * The actual derivation strategy — single-key BIP-44/49/84/86 or multisig
+ * `wsh(sortedmulti)` — is injected via [keySource]. The gap-limit scanner here
+ * doesn't care which one is active: it just asks the source for the next key
+ * and stores whatever [WalletPublicKey] comes back.
  */
 class PublicKeyManager(
-    private val hdWalletManager: HDWalletManager,
+    private val keySource: WalletKeySource,
     private val storage: PublicKeyStorage,
     private val gapLimit: Int = 20
 ) {
@@ -149,20 +151,6 @@ class PublicKeyManager(
         }
     }
 
-    private fun deriveKey(isExternal: Boolean, index: Int): WalletPublicKey {
-        val publicKey = hdWalletManager.derivePublicKey(isExternal, index)
-        val path = hdWalletManager.getDerivationPath(isExternal, index)
-        val hash = Crypto.hash160(publicKey.value)
-
-        return WalletPublicKey(
-            path = path,
-            purpose = hdWalletManager.purpose,
-            account = hdWalletManager.account,
-            isExternal = isExternal,
-            index = index,
-            publicKey = publicKey,
-            publicKeyHash = hash,
-            isUsed = false
-        )
-    }
+    private fun deriveKey(isExternal: Boolean, index: Int): WalletPublicKey =
+        keySource.deriveKey(isExternal, index)
 }

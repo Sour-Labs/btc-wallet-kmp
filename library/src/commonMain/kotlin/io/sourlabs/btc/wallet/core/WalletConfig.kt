@@ -1,6 +1,7 @@
 package io.sourlabs.btc.wallet.core
 
 import io.sourlabs.btc.wallet.descriptors.Descriptor
+import io.sourlabs.btc.wallet.descriptors.OutputDescriptor
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
 
@@ -142,15 +143,17 @@ sealed class WalletConfig {
     }
 
     /**
-     * Create a watch-only wallet from a BIP-380 output descriptor, e.g.
-     * `wpkh(...)` wrapping an account-level extended public key with a
-     * `#xxxxxxxx` checksum. Both [purpose] and [network] are dictated by the
-     * descriptor itself — the wrapper picks the BIP, and the embedded extended
-     * key's SLIP-132 prefix picks the network. [account] is taken from the
-     * third path step of the key origin if present, else 0.
+     * Create a watch-only wallet from a BIP-380 output descriptor.
      *
-     * See [Descriptor] for the supported
-     * subset.
+     * Accepts both single-key descriptors (`wpkh(...)`, `pkh(...)`, `sh(wpkh(...))`,
+     * `tr(...)`) and multisig descriptors (`wsh(sortedmulti(M, KEY1, ..., KEYN))`).
+     * [purpose] and [network] are dictated by the descriptor itself — the
+     * wrapper picks the BIP and the embedded extended keys' SLIP-132 prefix
+     * picks the network. For single-key descriptors [account] is the third
+     * path step of the key origin if present, else 0; multisig descriptors
+     * don't have a single account and report 0.
+     *
+     * See [OutputDescriptor] for the supported subset.
      */
     data class WatchOnlyDescriptor(
         val descriptor: String,
@@ -160,20 +163,42 @@ sealed class WalletConfig {
         // Initialized in init {} so any DescriptorException surfaces from a
         // clearly-construction-time block, not from a property-initializer
         // chain that's harder to read in a stack trace.
-        private val parsed: Descriptor
+        private val parsed: OutputDescriptor
         override val purpose: Purpose
         override val network: Network
         override val account: Int
 
-        /** The parsed descriptor — exposed for downstream consumers. */
-        val parsedDescriptor: Descriptor get() = parsed
+        /**
+         * The parsed descriptor as the unified sum type — exposes both the
+         * single-key and multisig flavours so the builder can dispatch on it.
+         */
+        val parsedOutputDescriptor: OutputDescriptor get() = parsed
+
+        /**
+         * Convenience accessor for single-key descriptors. Throws
+         * [IllegalStateException] if the descriptor is multisig — callers that
+         * need to handle both shapes should read [parsedOutputDescriptor]
+         * instead. Kept for source-compatibility with the previous
+         * single-key-only API.
+         */
+        val parsedDescriptor: Descriptor
+            get() = when (val p = parsed) {
+                is OutputDescriptor.SingleKey -> p.descriptor
+                is OutputDescriptor.Multisig -> error(
+                    "parsedDescriptor is only valid for single-key descriptors; " +
+                        "use parsedOutputDescriptor for multisig support"
+                )
+            }
 
         init {
             require(gapLimit > 0) { "Gap limit must be positive" }
-            parsed = Descriptor.parse(descriptor)
+            parsed = OutputDescriptor.parse(descriptor)
             purpose = parsed.purpose
             network = parsed.network
-            account = parsed.account
+            account = when (val p = parsed) {
+                is OutputDescriptor.SingleKey -> p.descriptor.account
+                is OutputDescriptor.Multisig -> p.descriptor.account
+            }
         }
     }
 

@@ -5,6 +5,7 @@ import io.sourlabs.btc.wallet.api.InvalidAddressException
 import io.sourlabs.btc.wallet.api.InvalidAmountException
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
+import io.sourlabs.btc.wallet.keys.HdWalletKeySource
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
 import io.sourlabs.btc.wallet.models.BlockInfo
 import io.sourlabs.btc.wallet.models.Network
@@ -49,7 +50,7 @@ class TransactionCreatorTest {
         // rather than stored on each UTXO, so this seeding step replaces the
         // old "confirmations = 6" field on test fixtures.
         storage.blockInfoStorage.saveBlockInfo(BlockInfo(height = 110, hash = "h", timestamp = 0))
-        val pkm = PublicKeyManager(hd, storage.publicKeyStorage, gapLimit = 20)
+        val pkm = PublicKeyManager(HdWalletKeySource(hd), storage.publicKeyStorage, gapLimit = 20)
         val provider = UnspentOutputProvider(
             storage = storage.unspentOutputStorage,
             blockInfoStorage = storage.blockInfoStorage,

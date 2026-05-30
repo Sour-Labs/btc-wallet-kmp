@@ -41,7 +41,20 @@ enum class ScriptType {
      * Pay-to-Taproot (SegWit v1)
      * Addresses start with 'bc1p' on mainnet
      */
-    P2TR;
+    P2TR,
+
+    /**
+     * Pay-to-Witness-Script-Hash (Native SegWit v0, 32-byte witness program)
+     * Addresses start with 'bc1q' on mainnet but are 62 chars long (vs. 42 for P2WPKH).
+     *
+     * Used by multisig watch-only wallets where the on-chain script is
+     * `OP_0 <sha256(redeemScript)>` and the redeem script is an M-of-N
+     * `OP_CHECKMULTISIG`. The wallet doesn't derive an address from a single
+     * public key for this type — the script is computed up front by
+     * [io.sourlabs.btc.wallet.descriptors.MultisigAddressDeriver] and carried
+     * on each [WalletPublicKey] as its [WalletPublicKey.scriptPubKey].
+     */
+    P2WSH;
 
     companion object {
         /**

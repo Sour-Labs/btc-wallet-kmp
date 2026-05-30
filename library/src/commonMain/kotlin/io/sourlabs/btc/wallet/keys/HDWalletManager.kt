@@ -8,6 +8,8 @@ import fr.acinq.bitcoin.PublicKey
 import io.sourlabs.btc.wallet.api.WalletInitializationException
 import io.sourlabs.btc.wallet.core.WalletConfig
 import io.sourlabs.btc.wallet.descriptors.Descriptor
+import io.sourlabs.btc.wallet.descriptors.MultisigDescriptor
+import io.sourlabs.btc.wallet.descriptors.OutputDescriptor
 import io.sourlabs.btc.wallet.keys.SeedManager.toSeed
 import io.sourlabs.btc.wallet.models.Network
 import io.sourlabs.btc.wallet.models.Purpose
@@ -112,7 +114,7 @@ class HDWalletManager private constructor(
                     network = config.network,
                     account = config.account
                 )
-                is WalletConfig.WatchOnlyDescriptor -> fromDescriptor(config.parsedDescriptor)
+                is WalletConfig.WatchOnlyDescriptor -> fromOutputDescriptor(config.parsedOutputDescriptor)
             }
         }
 
@@ -240,6 +242,38 @@ class HDWalletManager private constructor(
          */
         fun fromDescriptor(descriptor: String): HDWalletManager =
             fromDescriptor(Descriptor.parse(descriptor))
+
+        /**
+         * Create a watch-only wallet from an [OutputDescriptor] — accepts both
+         * single-key and multisig flavours.
+         *
+         * For multisig the manager is constructed from the first cosigner's
+         * xpub. The single per-cosigner xpub doesn't match the actual on-chain
+         * script — multisig addresses derive from N cosigners combined — so
+         * any code path that tries to use this manager's [derivePublicKey] for
+         * address derivation would produce wrong results. That's intentional
+         * and safe: in the multisig watch-only flow address derivation goes
+         * through [MultisigKeySource] (which the builder wires into
+         * [PublicKeyManager]) and bypasses this manager entirely. The manager
+         * exists only so [BitcoinKit] can expose [network] / [purpose] /
+         * [isWatchOnly] without a deeper refactor; signing paths short-circuit
+         * on [isWatchOnly] before touching it.
+         */
+        fun fromOutputDescriptor(descriptor: OutputDescriptor): HDWalletManager =
+            when (descriptor) {
+                is OutputDescriptor.SingleKey -> fromDescriptor(descriptor.descriptor)
+                is OutputDescriptor.Multisig -> fromMultisigPlaceholder(descriptor.descriptor)
+            }
+
+        private fun fromMultisigPlaceholder(descriptor: MultisigDescriptor): HDWalletManager {
+            val firstCosigner = descriptor.keys.first().extendedPublicKey
+            return fromExtendedPublicKey(
+                extendedPublicKey = firstCosigner,
+                purpose = descriptor.purpose,
+                network = descriptor.network,
+                account = descriptor.account,
+            )
+        }
 
         private fun deriveAccountKey(
             master: ExtendedPrivateKey,
