@@ -1,6 +1,7 @@
 package io.sourlabs.btc.wallet.descriptors
 
 import fr.acinq.bitcoin.Bitcoin
+import fr.acinq.bitcoin.Crypto
 import fr.acinq.bitcoin.DeterministicWallet
 import fr.acinq.bitcoin.PublicKey
 import fr.acinq.bitcoin.Script
@@ -37,6 +38,36 @@ object MultisigAddressDeriver {
      *   `chain/index`.
      */
     fun derive(descriptor: MultisigDescriptor, change: Boolean, index: Int): String {
+        val derived = deriveScripts(descriptor, change, index)
+        val chainHash = descriptor.network.toChain().chainHash
+        val result = Bitcoin.addressFromPublicKeyScript(chainHash, Script.parse(derived.scriptPubKey))
+        if (result.isLeft) {
+            throw IllegalStateException(
+                "Failed to encode P2WSH address for ${descriptor.network} at " +
+                    "chain=${if (change) 1 else 0} index=$index"
+            )
+        }
+        @Suppress("UNCHECKED_CAST")
+        return (result as fr.acinq.bitcoin.utils.Either.Right<String>).value
+    }
+
+    /**
+     * Core derivation: walk the cosigner xpubs to `chain/index`, apply BIP-67
+     * sorting when the descriptor is sortedmulti, and assemble the redeem and
+     * P2WSH scripts. Surfaces all the intermediate byte arrays the kit needs
+     * to wire onto a `WalletPublicKey` (witness program for index lookups,
+     * scriptPubKey for the on-chain match, ordered pubkeys for the
+     * representative-key field on the record).
+     *
+     * Internal so both [derive] and [io.sourlabs.btc.wallet.keys.MultisigKeySource]
+     * share the same sort + script-construction codepath — Cursor Bugbot
+     * flagged the earlier duplication as a drift risk.
+     */
+    internal fun deriveScripts(
+        descriptor: MultisigDescriptor,
+        change: Boolean,
+        index: Int,
+    ): DerivedMultisigScripts {
         require(index >= 0) { "index must be non-negative, got $index" }
 
         val chainStep = if (change) 1L else 0L
@@ -53,27 +84,27 @@ object MultisigAddressDeriver {
             derivedPubkeys
         }
 
-        val redeemScript = Script.createMultiSigMofN(descriptor.threshold, ordered)
-        val p2wshScript = Script.pay2wsh(redeemScript)
+        val redeemScript = Script.write(Script.createMultiSigMofN(descriptor.threshold, ordered))
+        val witnessProgram = Crypto.sha256(redeemScript)
+        val scriptPubKey = Script.write(Script.pay2wsh(redeemScript))
 
-        val chainHash = descriptor.network.toChain().chainHash
-        val result = Bitcoin.addressFromPublicKeyScript(chainHash, p2wshScript)
-        if (result.isLeft) {
-            throw IllegalStateException(
-                "Failed to encode P2WSH address for ${descriptor.network} at " +
-                    "chain=$chainStep index=$index"
-            )
-        }
-        @Suppress("UNCHECKED_CAST")
-        return (result as fr.acinq.bitcoin.utils.Either.Right<String>).value
+        return DerivedMultisigScripts(
+            cosignerPubkeysInDescriptorOrder = derivedPubkeys,
+            sortedPubkeys = ordered,
+            redeemScript = redeemScript,
+            witnessProgram = witnessProgram,
+            scriptPubKey = scriptPubKey,
+        )
     }
 
     /**
      * BIP-67 lexicographic comparator for compressed public keys. Compares the
      * 33-byte values byte-by-byte as unsigned integers — the same ordering
-     * that Bitcoin Core's `sortedmulti` descriptor produces.
+     * that Bitcoin Core's `sortedmulti` descriptor produces. Exposed as
+     * `internal` so the kit's `MultisigKeySource` can reuse it without
+     * reimplementing the byte-by-byte comparison.
      */
-    private val PublicKeyLexicographicComparator: Comparator<PublicKey> = Comparator { a, b ->
+    internal val PublicKeyLexicographicComparator: Comparator<PublicKey> = Comparator { a, b ->
         val aBytes = a.value.toByteArray()
         val bBytes = b.value.toByteArray()
         val minLen = minOf(aBytes.size, bBytes.size)
@@ -83,5 +114,27 @@ object MultisigAddressDeriver {
         }
         aBytes.size - bBytes.size
     }
-
 }
+
+/**
+ * Intermediate values produced by [MultisigAddressDeriver.deriveScripts] —
+ * everything needed to encode the bech32 address *and* to wire a
+ * `WalletPublicKey` record onto the gap-limit store.
+ */
+internal data class DerivedMultisigScripts(
+    /** Cosigner child pubkeys at `chain/index`, in descriptor order. */
+    val cosignerPubkeysInDescriptorOrder: List<PublicKey>,
+    /**
+     * Cosigner child pubkeys in the order they appear inside the redeem
+     * script. For sortedmulti this is the BIP-67 lexicographic sort of
+     * [cosignerPubkeysInDescriptorOrder]; for plain multi it equals the
+     * descriptor order.
+     */
+    val sortedPubkeys: List<PublicKey>,
+    /** Serialized bytes of `OP_M ... OP_N OP_CHECKMULTISIG`. */
+    val redeemScript: ByteArray,
+    /** 32-byte SHA-256 of the redeem script — the P2WSH witness program. */
+    val witnessProgram: ByteArray,
+    /** Serialized bytes of `OP_0 <32-byte witness program>` — the scriptPubKey. */
+    val scriptPubKey: ByteArray,
+)

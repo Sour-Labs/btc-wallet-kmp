@@ -1,9 +1,6 @@
 package io.sourlabs.btc.wallet.keys
 
 import fr.acinq.bitcoin.Crypto
-import fr.acinq.bitcoin.DeterministicWallet
-import fr.acinq.bitcoin.PublicKey
-import fr.acinq.bitcoin.Script
 import io.sourlabs.btc.wallet.descriptors.MultisigAddressDeriver
 import io.sourlabs.btc.wallet.descriptors.MultisigDescriptor
 import io.sourlabs.btc.wallet.models.Network
@@ -104,25 +101,15 @@ class MultisigKeySource(
     }
 
     override fun deriveKey(isExternal: Boolean, index: Int): WalletPublicKey {
+        // Delegate sorting + redeem-script + scriptPubKey construction to the
+        // descriptor module so the two code paths can't drift. We only need
+        // to wrap the result into a WalletPublicKey record here.
+        val derived = MultisigAddressDeriver.deriveScripts(
+            descriptor = descriptor,
+            change = !isExternal,
+            index = index,
+        )
         val chainStep = if (isExternal) 0L else 1L
-        // Derive once, both for the scriptPubKey computation below (we need
-        // every cosigner pubkey to build the redeem script) and to surface
-        // the first cosigner as the representative `publicKey` on the entry.
-        val childPubkeys: List<PublicKey> = descriptor.keys.map { key ->
-            val parent = DeterministicWallet.ExtendedPublicKey.decode(key.extendedPublicKey).second
-            val chainKey = DeterministicWallet.derivePublicKey(parent, chainStep)
-            DeterministicWallet.derivePublicKey(chainKey, index.toLong()).publicKey
-        }
-
-        val ordered: List<PublicKey> = if (descriptor.sorted) {
-            childPubkeys.sortedWith(BitcoinPubKeyLex)
-        } else {
-            childPubkeys
-        }
-        val redeemScript = Script.write(Script.createMultiSigMofN(descriptor.threshold, ordered))
-        val witnessProgram = Crypto.sha256(redeemScript)
-        val scriptPubKey = Script.write(Script.pay2wsh(redeemScript))
-
         return WalletPublicKey(
             path = "$pathPrefix/$chainStep/$index",
             purpose = descriptor.purpose,
@@ -133,29 +120,11 @@ class MultisigKeySource(
             // reads it without special-casing multisig. Never used for signing
             // (the wallet is watch-only) or for script derivation (overridden
             // by scriptPubKey below).
-            publicKey = childPubkeys.first(),
-            publicKeyHash = witnessProgram,
-            scriptPubKey = scriptPubKey,
+            publicKey = derived.cosignerPubkeysInDescriptorOrder.first(),
+            publicKeyHash = derived.witnessProgram,
+            scriptPubKey = derived.scriptPubKey,
             scriptTypeOverride = ScriptType.P2WSH,
             isUsed = false,
         )
-    }
-
-    private companion object {
-        /**
-         * BIP-67 lexicographic comparator for compressed pubkeys. Same as the
-         * one in [MultisigAddressDeriver]; kept local to avoid making it a
-         * public surface of the descriptor module.
-         */
-        private val BitcoinPubKeyLex: Comparator<PublicKey> = Comparator { a, b ->
-            val aBytes = a.value.toByteArray()
-            val bBytes = b.value.toByteArray()
-            val minLen = minOf(aBytes.size, bBytes.size)
-            for (i in 0 until minLen) {
-                val cmp = (aBytes[i].toInt() and 0xff) - (bBytes[i].toInt() and 0xff)
-                if (cmp != 0) return@Comparator cmp
-            }
-            aBytes.size - bBytes.size
-        }
     }
 }
