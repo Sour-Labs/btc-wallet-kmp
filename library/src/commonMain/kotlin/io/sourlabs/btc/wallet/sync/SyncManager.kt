@@ -512,6 +512,13 @@ class SyncManager(
     private suspend fun performIncrementalSync() {
         val currentApi = api ?: return
 
+        // Snapshot the pre-poll state so a tolerated failure can roll back any
+        // intermediate Syncing flip. A new-block poll calls performFullSync(),
+        // which sets Syncing(0.0) up front; if that then throws and we tolerate
+        // it, without this rollback the indicator would stay stuck mid-sync
+        // instead of resting on the last good (Synced) state.
+        val stateBeforePoll = _syncState.value
+
         try {
             // Check for new blocks
             val currentHeight = currentApi.getBlockHeight()
@@ -554,9 +561,15 @@ class SyncManager(
                 _events.emit(WalletEvent.WalletError(e.message ?: "Sync failed", e))
             } else {
                 // Tolerate isolated poll failures so a healthy wallet doesn't
-                // flicker to an error state between successful polls. The next
-                // poll either recovers (resetting the streak) or pushes us past
-                // the tolerance threshold.
+                // flicker to an error state between successful polls. Roll back
+                // any intermediate Syncing flip (a new-block performFullSync that
+                // failed) to the pre-poll state so the indicator rests on the
+                // last good state. The next poll either recovers (resetting the
+                // streak) or pushes us past the tolerance threshold.
+                if (_syncState.value != stateBeforePoll) {
+                    _syncState.value = stateBeforePoll
+                    _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+                }
                 log.w(e) {
                     "Incremental sync failed $consecutiveIncrementalFailures time(s) " +
                         "(tolerance $INCREMENTAL_FAILURE_TOLERANCE); tolerating, keeping last state"
