@@ -10,6 +10,21 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 _No changes yet._
 
+## [0.5.1] - 2026-06-02
+
+### Fixed
+
+- Transient sync failures during continuous polling no longer surface as
+  `SyncState.Error`. A single failed incremental poll (a request timeout, a
+  transient 5xx, a dropped socket) is now tolerated and the wallet keeps its
+  last-synced state; the error is reported only after two consecutive polls
+  fail. This stops the UI from flashing a spurious connection error on an
+  otherwise-healthy connection. The initial full sync is unaffected — it still
+  reports failure immediately once all fallback configs are exhausted.
+- A tolerated failure on a new-block poll no longer leaves the wallet stuck in
+  `SyncState.Syncing`: `performIncrementalSync` now snapshots the pre-poll state
+  and rolls back any intermediate `Syncing` flip when the failure is tolerated.
+
 ## [0.5.0] - 2026-05-29
 
 ### Added
@@ -147,6 +162,7 @@ Central upload.
   in distributed client binaries — anyone with the APK/IPA can extract it.
   Production setups should proxy through a backend.
 
-[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Sour-Labs/btc-wallet-kmp/releases/tag/v0.4.0
