@@ -20,6 +20,16 @@ private const val CHAIN_TXS_PAGE_SIZE = 25
 // stored cursor whose tx was orphaned by a deep reorg). 200 pages = 5,000 txs.
 private const val MAX_CHAIN_PAGES = 200
 
+// Consecutive failed incremental polls tolerated before the poll loop surfaces
+// SyncState.Error. At the default 30s polling interval this lets a healthy
+// wallet ride out a single transient connectivity blip (one slow or dropped
+// request, a brief Wi-Fi/cellular handoff) while still showing its last-synced
+// state, instead of flashing a connection error and recovering 30s later. Once
+// a second consecutive poll fails the error surfaces. The initial full sync is
+// unaffected: it still reports failure immediately after all fallback configs
+// are exhausted.
+private const val INCREMENTAL_FAILURE_TOLERANCE = 2
+
 private val log = Logger.withTag("SyncManager")
 
 /**
@@ -54,6 +64,11 @@ class SyncManager(
     private var syncJob: Job? = null
     private var api: BlockchainExplorerApi? = null
     private var activeSyncConfig: SyncConfig = syncConfigs.first()
+
+    // Consecutive incremental-poll failures, used to debounce transient blips so
+    // a single dropped poll doesn't surface as SyncState.Error. See
+    // INCREMENTAL_FAILURE_TOLERANCE. Reset to 0 on any clean poll and on start().
+    private var consecutiveIncrementalFailures = 0
 
     private val baseUrl: String
         get() = when (val config = activeSyncConfig) {
@@ -95,6 +110,7 @@ class SyncManager(
         // BitcoinKit.start()'s `syncState.first { Synced || Error }` await return
         // immediately on a restart, before the new sync has had a chance to run.
         _syncState.value = SyncState.NotSynced
+        consecutiveIncrementalFailures = 0
 
         syncJob = scope.launch {
             try {
@@ -496,6 +512,13 @@ class SyncManager(
     private suspend fun performIncrementalSync() {
         val currentApi = api ?: return
 
+        // Snapshot the pre-poll state so a tolerated failure can roll back any
+        // intermediate Syncing flip. A new-block poll calls performFullSync(),
+        // which sets Syncing(0.0) up front; if that then throws and we tolerate
+        // it, without this rollback the indicator would stay stuck mid-sync
+        // instead of resting on the last good (Synced) state.
+        val stateBeforePoll = _syncState.value
+
         try {
             // Check for new blocks
             val currentHeight = currentApi.getBlockHeight()
@@ -521,13 +544,37 @@ class SyncManager(
                     _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
                 }
             }
+            // Clean poll — clear any transient-failure streak so the next blip
+            // starts counting from zero.
+            consecutiveIncrementalFailures = 0
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            log.w(e) { "Incremental sync failed" }
-            _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
-            _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
-            _events.emit(WalletEvent.WalletError(e.message ?: "Sync failed", e))
+            consecutiveIncrementalFailures++
+            if (consecutiveIncrementalFailures >= INCREMENTAL_FAILURE_TOLERANCE) {
+                log.w(e) {
+                    "Incremental sync failed $consecutiveIncrementalFailures times " +
+                        "(tolerance $INCREMENTAL_FAILURE_TOLERANCE); surfacing error"
+                }
+                _syncState.value = SyncState.Error(e.message ?: "Sync failed", e)
+                _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+                _events.emit(WalletEvent.WalletError(e.message ?: "Sync failed", e))
+            } else {
+                // Tolerate isolated poll failures so a healthy wallet doesn't
+                // flicker to an error state between successful polls. Roll back
+                // any intermediate Syncing flip (a new-block performFullSync that
+                // failed) to the pre-poll state so the indicator rests on the
+                // last good state. The next poll either recovers (resetting the
+                // streak) or pushes us past the tolerance threshold.
+                if (_syncState.value != stateBeforePoll) {
+                    _syncState.value = stateBeforePoll
+                    _events.emit(WalletEvent.SyncStateChanged(_syncState.value))
+                }
+                log.w(e) {
+                    "Incremental sync failed $consecutiveIncrementalFailures time(s) " +
+                        "(tolerance $INCREMENTAL_FAILURE_TOLERANCE); tolerating, keeping last state"
+                }
+            }
         }
     }
 
