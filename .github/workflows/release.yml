@@ -15,12 +15,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-# Opt actions/checkout, actions/setup-java, and gradle/actions/setup-gradle
-# into Node 24 ahead of GitHub's 2026-06-02 forced switch. Once Node 24 is
-# the runner default this env var is a no-op and can be removed.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   publish:
     # macOS runner is required: a full KMP publication includes the iOS
@@ -31,14 +25,14 @@ jobs:
       # contents: write is needed for the GitHub Release creation step.
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: zulu
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Verify tag matches library version
         if: startsWith(github.ref, 'refs/tags/v')
