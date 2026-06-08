@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "io.sourlabs.btc"
-version = "0.5.1"
+version = "0.6.0"
 
 kotlin {
     jvm()
