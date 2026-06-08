@@ -10,6 +10,20 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 _No changes yet._
 
+## [0.6.0] - 2026-06-07
+
+### Added
+
+- `WalletDescriptorExport.outputDescriptor(config)` builds a canonical BIP-380
+  output descriptor (with checksum) that captures a wallet as watch-only, for
+  re-import into another wallet or app. Mnemonic/seed wallets get a full
+  `[masterFingerprint/purpose'/coin'/account']` key origin; bare-xpub
+  watch-only wallets get an origin-less descriptor; descriptor-backed
+  (including `wsh(sortedmulti)` multisig) wallets are returned verbatim. Covers
+  both the receive and change branches via the BIP-389 multipath `<0;1>`
+  suffix, with the wrapper following the BIP purpose (`pkh` / `sh(wpkh)` /
+  `wpkh` / `tr`).
+
 ## [0.5.1] - 2026-06-02
 
 ### Fixed
@@ -162,7 +176,8 @@ Central upload.
   in distributed client binaries — anyone with the APK/IPA can extract it.
   Production setups should proxy through a backend.
 
-[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Sour-Labs/btc-wallet-kmp/releases/tag/v0.4.0
