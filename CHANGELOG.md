@@ -10,6 +10,17 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 _No changes yet._
 
+## [0.6.1] - 2026-06-09
+
+### Added
+
+- `BitcoinKit.firstReceiveAddress()` returns the wallet's first receive address
+  (external index 0) as a stable identifier that never advances as addresses are
+  used — unlike `receiveAddress()`, which returns the next unused key. Backed by
+  a new `PublicKeyManager.externalKeyAt(index)`, which returns the stored key for
+  that index when present and otherwise derives it directly, so it resolves
+  correctly even on a non-started kit with an empty key pool.
+
 ## [0.6.0] - 2026-06-07
 
 ### Added
@@ -176,7 +187,8 @@ Central upload.
   in distributed client binaries — anyone with the APK/IPA can extract it.
   Production setups should proxy through a backend.
 
-[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.4.0...v0.5.0
