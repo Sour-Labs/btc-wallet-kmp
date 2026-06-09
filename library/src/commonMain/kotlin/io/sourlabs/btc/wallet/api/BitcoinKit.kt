@@ -128,6 +128,17 @@ class BitcoinKit private constructor(
     }
 
     /**
+     * Get the wallet's first receive address (external index 0).
+     *
+     * Unlike [receiveAddress], this is a stable identifier: it always returns
+     * the address at receive index 0 and never advances as addresses are used.
+     */
+    suspend fun firstReceiveAddress(): String {
+        val key = publicKeyManager.externalKeyAt(0)
+        return addressConverter.toAddress(key)
+    }
+
+    /**
      * Get all used receive addresses.
      */
     suspend fun usedAddresses(): List<String> {

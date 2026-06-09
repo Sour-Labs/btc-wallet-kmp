@@ -76,6 +76,26 @@ class BitcoinKitMultisigBuilderTest {
     }
 
     @Test
+    fun firstReceiveAddressIsExternalIndexZero() = runTest {
+        val config = WalletConfig.WatchOnlyDescriptor(descriptor = bitkeyDescriptor())
+        val kit = BitcoinKit.builder(config).build()
+
+        val descriptor = assertNotNull(
+            (config.parsedOutputDescriptor as? OutputDescriptor.Multisig)?.descriptor
+        )
+        val expected = MultisigAddressDeriver.derive(descriptor, change = false, index = 0)
+        // firstReceiveAddress() must always resolve external index 0...
+        assertEquals(
+            expected,
+            kit.firstReceiveAddress(),
+            "firstReceiveAddress() must be external index 0",
+        )
+        // ...and on a fresh wallet (nothing used yet) that is also the next
+        // unused receive address.
+        assertEquals(kit.receiveAddress(), kit.firstReceiveAddress())
+    }
+
+    @Test
     fun gapLimitFillsWithMultisigKeysCarryingP2wshScriptType() = runTest {
         val config = WalletConfig.WatchOnlyDescriptor(
             descriptor = bitkeyDescriptor(),
