@@ -61,6 +61,17 @@ class PublicKeyManager(
     }
 
     /**
+     * Get the external (receive) key at a specific [index], regardless of used
+     * state. Returns the stored key when the pool already contains it, otherwise
+     * derives it directly without persisting. Used to surface a stable address
+     * such as the first receive address, which must not advance as addresses
+     * are used.
+     */
+    suspend fun externalKeyAt(index: Int): WalletPublicKey =
+        storage.getKeys(isExternal = true).firstOrNull { it.index == index }
+            ?: deriveKey(isExternal = true, index = index)
+
+    /**
      * Get all internal (change) public keys.
      */
     suspend fun getInternalPublicKeys(): List<WalletPublicKey> {
