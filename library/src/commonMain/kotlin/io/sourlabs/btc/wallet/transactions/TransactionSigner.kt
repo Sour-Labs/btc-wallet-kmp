@@ -189,20 +189,16 @@ class TransactionSigner(
         privateKey: DeterministicWallet.ExtendedPrivateKey,
         allUtxos: List<UnspentOutput>
     ): Transaction {
-        val internalXOnlyKey = privateKey.privateKey.xOnlyPublicKey()
-
-        // Compute the tweak for key path spending using BIP86 (KeyPathTweak = no scripts)
-        val tweak = internalXOnlyKey.tweak(Crypto.TaprootTweak.KeyPathTweak)
-        val tweakedPrivateKey = privateKey.privateKey.tweak(tweak)
-
         // Get all previous outputs for signing
         val prevOuts = allUtxos.map { u ->
             TxOut(Satoshi(u.value), ByteVector(u.scriptPubKey))
         }
 
-        // Sign using Schnorr signature
+        // Sign using Schnorr signature. Pass the *untweaked* private key:
+        // signInputTaprootKeyPath applies the BIP-341 key-path tweak itself
+        // when scriptTree is null.
         val sig = Transaction.signInputTaprootKeyPath(
-            tweakedPrivateKey,
+            privateKey.privateKey,
             tx,
             inputIndex,
             prevOuts,
