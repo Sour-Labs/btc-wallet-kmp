@@ -3,6 +3,7 @@ package io.sourlabs.btc.wallet.transactions
 import fr.acinq.bitcoin.ByteVector32
 import io.sourlabs.btc.wallet.api.InvalidAddressException
 import io.sourlabs.btc.wallet.api.InvalidAmountException
+import io.sourlabs.btc.wallet.api.SigningException
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.keys.HdWalletKeySource
@@ -395,6 +396,69 @@ class TransactionCreatorTest {
         assertEquals(30_000, tx.transaction.txOut[0].amount.toLong(), "destination gets the exact requested amount")
         val outputTotal = tx.transaction.txOut.sumOf { it.amount.toLong() }
         assertEquals(tx.fee, 100_000 - outputTotal, "reported fee equals on-chain fee")
+    }
+
+    // ─── Consensus-validity gate (crypto review F4) ───
+
+    /**
+     * A corrupt UTXO claiming [key]'s derivation path but carrying some other
+     * key's scriptPubKey: the signer derives [key] and produces a witness that
+     * can never satisfy the script — a consensus-invalid spend that must be
+     * caught after signing and before any state is mutated.
+     */
+    private fun wrongScriptUtxo(
+        key: WalletPublicKey,
+        otherKey: WalletPublicKey,
+        converter: AddressConverter,
+    ): UnspentOutput = utxoBoundTo(key, converter, txidHexSeed = 1, value = 100_000).copy(
+        scriptPubKey = converter.createScriptPubKey(otherKey.publicKey, otherKey.scriptType),
+    )
+
+    private suspend fun assertNoStateMutation(f: Fixture) {
+        assertEquals(1, f.storage.unspentOutputStorage.getAllUtxos().size, "UTXO must not be deleted")
+        assertEquals(0, f.publicKeyManager.getExternalPublicKeys().count { it.isUsed })
+        assertEquals(0, f.publicKeyManager.getInternalPublicKeys().count { it.isUsed })
+        assertEquals(0, f.storage.transactionStorage.getTransactions().size, "no PENDING tx must be persisted")
+    }
+
+    @Test
+    fun createRejectsConsensusInvalidTxAndLeavesStateUntouched() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(wrongScriptUtxo(externalKeys[0], externalKeys[1], f.converter))
+
+        assertFailsWith<SigningException> {
+            f.creator.create(externalDestination, amount = 30_000, feeRate = 1)
+        }
+        assertNoStateMutation(f)
+    }
+
+    @Test
+    fun createWithUtxosRejectsConsensusInvalidTxAndLeavesStateUntouched() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        val corrupt = wrongScriptUtxo(externalKeys[0], externalKeys[1], f.converter)
+        f.storage.unspentOutputStorage.saveUtxo(corrupt)
+
+        assertFailsWith<SigningException> {
+            f.creator.createWithUtxos(externalDestination, amount = 30_000, feeRate = 1, utxos = listOf(corrupt))
+        }
+        assertNoStateMutation(f)
+    }
+
+    @Test
+    fun createSweepRejectsConsensusInvalidTxAndLeavesStateUntouched() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(wrongScriptUtxo(externalKeys[0], externalKeys[1], f.converter))
+
+        assertFailsWith<SigningException> {
+            f.creator.createSweep(externalDestination, feeRate = 1)
+        }
+        assertNoStateMutation(f)
     }
 
     @Test
