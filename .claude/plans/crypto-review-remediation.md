@@ -24,7 +24,7 @@ Update Status as tasks land (`todo` → `in progress` → `PR #NN` → `done`).
 
 | # | Task | Priority | Findings | Status |
 |---|------|----------|----------|--------|
-| 1 | Fix Taproot double-tweak + signature-validity tests | P0 | F1, F4 (tests) | in progress |
+| 1 | Fix Taproot double-tweak + signature-validity tests | P0 | F1, F4 (tests) | PR #53 |
 | 2 | Fix `subtractFeeFromAmount` fee accounting + amount validation | P0 | F2, F3 | todo |
 | 3 | Consensus-validity gate after signing | P0 | F4 | todo |
 | 4 | Validate extended-key version prefix against network | P1 | F5 | todo |
