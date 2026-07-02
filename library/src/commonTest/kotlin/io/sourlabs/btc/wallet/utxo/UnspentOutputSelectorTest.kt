@@ -3,6 +3,7 @@ package io.sourlabs.btc.wallet.utxo
 import fr.acinq.bitcoin.ByteVector32
 import io.sourlabs.btc.wallet.models.ScriptType
 import io.sourlabs.btc.wallet.models.UnspentOutput
+import io.sourlabs.btc.wallet.transactions.FeeCalculator
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -140,6 +141,102 @@ class UnspentOutputSelectorTest {
     fun testEmptyUtxoList() {
         val result = selector.select(emptyList(), 10_000, 10, p2wpkhDestination)
         assertNull(result)
+    }
+
+    // ─── Subtract-fee selection semantics (crypto review F2) ───
+
+    /**
+     * Subtract-fee with change: coverage target is the amount alone, the
+     * destination gets amount − feeWithChange, and change is totalInput − amount.
+     */
+    @Test
+    fun subtractFeeSelectionWithChange() {
+        val utxos = listOf(createUtxo(100_000))
+        val feeRate = 10L
+
+        val result = selector.select(
+            utxos, 50_000, feeRate, p2wpkhDestination,
+            subtractFeeFromAmount = true,
+        )
+
+        assertNotNull(result)
+        val expectedFee = FeeCalculator.estimateFee(
+            listOf(ScriptType.P2WPKH), listOf(ScriptType.P2WPKH, ScriptType.P2WPKH), feeRate,
+        )
+        assertEquals(expectedFee, result.fee)
+        assertEquals(50_000 - expectedFee, result.sendAmount, "destination gets amount − fee")
+        assertEquals(50_000, result.change, "change is totalInput − amount, independent of fee")
+        assertEquals(result.totalInput, result.sendAmount + result.fee + result.change)
+    }
+
+    /**
+     * Subtract-fee exact balance: totalInput == targetAmount must be selectable
+     * (this used to return null because selection demanded amount + fee).
+     */
+    @Test
+    fun subtractFeeSelectionAllowsExactBalance() {
+        val utxos = listOf(createUtxo(100_000))
+        val feeRate = 10L
+
+        val result = selector.select(
+            utxos, 100_000, feeRate, p2wpkhDestination,
+            subtractFeeFromAmount = true,
+        )
+
+        assertNotNull(result, "exact-balance subtract-fee send must be selectable")
+        val expectedFee = FeeCalculator.estimateFee(
+            listOf(ScriptType.P2WPKH), listOf(ScriptType.P2WPKH), feeRate,
+        )
+        assertEquals(expectedFee, result.fee)
+        assertEquals(100_000 - expectedFee, result.sendAmount)
+        assertEquals(0L, result.change)
+        assertEquals(result.totalInput, result.sendAmount + result.fee + result.change)
+    }
+
+    /**
+     * Subtract-fee with a sub-dust residual: the residual is absorbed into the
+     * fee exactly once — sendAmount is still amount − feeWithoutChange.
+     */
+    @Test
+    fun subtractFeeSelectionAbsorbsSubDustResidualIntoFeeOnce() {
+        val utxos = listOf(createUtxo(100_000))
+        val feeRate = 10L
+
+        // Residual 100_000 − 99_700 = 300 ≤ dust (546) → no change output.
+        val result = selector.select(
+            utxos, 99_700, feeRate, p2wpkhDestination,
+            subtractFeeFromAmount = true,
+        )
+
+        assertNotNull(result)
+        val feeWithoutChange = FeeCalculator.estimateFee(
+            listOf(ScriptType.P2WPKH), listOf(ScriptType.P2WPKH), feeRate,
+        )
+        assertEquals(0L, result.change)
+        assertEquals(feeWithoutChange + 300, result.fee, "fee absorbs the residual")
+        assertEquals(99_700 - feeWithoutChange, result.sendAmount, "residual must not also come out of the destination")
+        assertEquals(result.totalInput, result.sendAmount + result.fee + result.change)
+    }
+
+    @Test
+    fun subtractFeeManualSelection() {
+        val utxos = listOf(createUtxo(50_000), createUtxo(30_000))
+        val feeRate = 10L
+
+        // Exact balance across both UTXOs.
+        val result = selector.selectManual(
+            utxos, 80_000, feeRate, p2wpkhDestination,
+            subtractFeeFromAmount = true,
+        )
+
+        assertNotNull(result, "manual exact-balance subtract-fee send must be selectable")
+        val expectedFee = FeeCalculator.estimateFee(
+            listOf(ScriptType.P2WPKH, ScriptType.P2WPKH), listOf(ScriptType.P2WPKH), feeRate,
+        )
+        assertEquals(expectedFee, result.fee)
+        assertEquals(80_000 - expectedFee, result.sendAmount)
+        assertEquals(0L, result.change)
+        assertEquals(result.totalInput, result.sendAmount + result.fee + result.change)
     }
 
     // ─── PR-07 regression anchors: per-script-type fee sizing ───

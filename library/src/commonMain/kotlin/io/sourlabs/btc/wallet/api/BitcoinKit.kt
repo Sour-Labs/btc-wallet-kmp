@@ -202,14 +202,17 @@ class BitcoinKit private constructor(
 
     /**
      * Get information about a potential send without creating the transaction.
+     * Pass the same [subtractFeeFromAmount] you'd pass to [createTransaction] /
+     * [send] so the reported amounts match what would actually be built.
      */
     suspend fun sendInfo(
         toAddress: String,
         amount: Long,
         feeRate: Long,
-        strategy: SelectionStrategy = SelectionStrategy.AUTOMATIC
+        strategy: SelectionStrategy = SelectionStrategy.AUTOMATIC,
+        subtractFeeFromAmount: Boolean = false
     ): SendInfo? {
-        return transactionCreator.getSendInfo(toAddress, amount, feeRate, strategy)
+        return transactionCreator.getSendInfo(toAddress, amount, feeRate, strategy, subtractFeeFromAmount)
     }
 
     /**

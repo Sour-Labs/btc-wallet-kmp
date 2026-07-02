@@ -242,36 +242,159 @@ class TransactionCreatorTest {
         }
     }
 
+    // ─── Subtract-fee accounting (crypto review F2/F3) ───
+
+    /**
+     * F2 reproduction: a subtract-fee send whose selection lands in the
+     * no-change branch must not pay the fee twice. The reported fee and the
+     * actual on-chain fee (inputs − outputs) have to be the same number.
+     */
     @Test
-    fun createAllowsSubDustAmountWhenSubtractingFee() = runTest {
-        // When the user opts into subtractFeeFromAmount, sub-dust amounts are
-        // their explicit choice. The validation gate should let it through —
-        // selection / build / signing may still fail downstream (e.g. amount-
-        // minus-fee goes negative), but that's the user's call to make.
-        //
-        // We can't just rely on "the call didn't throw InvalidAmountException"
-        // because real wallets fail later anyway for tiny amounts. Instead,
-        // catch any exception and assert it is NOT InvalidAmountException —
-        // that's the validation regression we'd be guarding against.
+    fun subtractFeeReportedFeeMatchesOnChainFee() = runTest {
         val f = newFixture()
         f.publicKeyManager.initialize()
         val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
         f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
 
-        val outcome = runCatching {
+        val tx = f.creator.create(
+            toAddress = externalDestination,
+            amount = 98_500,
+            feeRate = 10,
+            subtractFeeFromAmount = true,
+        )
+
+        val outputTotal = tx.transaction.txOut.sumOf { it.amount.toLong() }
+        val onChainFee = 100_000 - outputTotal
+        assertEquals(tx.fee, onChainFee, "reported fee must equal the on-chain fee (inputs − outputs)")
+        assertEquals(100_000, outputTotal + tx.fee, "destination + change + fee must equal total input")
+    }
+
+    /**
+     * F2, no-change branch: when the subtract-fee residual is sub-dust the fee
+     * absorbs it — but only once. Destination gets totalInput − fee.
+     */
+    @Test
+    fun subtractFeeNoChangePaysReportedFeeOnly() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+
+        // Residual (100_000 − 99_700 = 300) is below dust (546) → no change output.
+        val tx = f.creator.create(
+            toAddress = externalDestination,
+            amount = 99_700,
+            feeRate = 10,
+            subtractFeeFromAmount = true,
+        )
+
+        assertEquals(1, tx.transaction.txOut.size, "sub-dust residual must not produce a change output")
+        val destination = tx.transaction.txOut[0].amount.toLong()
+        assertEquals(100_000 - tx.fee, destination, "destination must receive totalInput − fee")
+    }
+
+    /**
+     * F3 reproduction: amount ≤ fee with subtractFeeFromAmount used to sign a
+     * negative-value destination output and corrupt local state (UTXOs deleted,
+     * PENDING tx persisted) before the guaranteed-to-fail broadcast. It must
+     * throw InvalidAmountException before signing/recording instead.
+     */
+    @Test
+    fun subtractFeeRejectsAmountBelowFeeAndLeavesStateUntouched() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+
+        assertFailsWith<InvalidAmountException> {
             f.creator.create(
                 toAddress = externalDestination,
-                amount = 100,  // sub-dust for P2WPKH (294 sats), but...
-                feeRate = 1,
-                subtractFeeFromAmount = true,  // ...subtracting fee means user opted in
+                amount = 600,
+                feeRate = 500, // fee (~71k sats) dwarfs the amount
+                subtractFeeFromAmount = true,
             )
         }
-        val thrown = outcome.exceptionOrNull()
-        assertTrue(
-            thrown !is InvalidAmountException,
-            "subtractFeeFromAmount=true must bypass the dust gate; instead got " +
-                "${thrown?.let { it::class.simpleName }}: ${thrown?.message}",
+
+        // No state mutation: UTXO still spendable, no keys burned, no PENDING tx.
+        assertEquals(1, f.storage.unspentOutputStorage.getAllUtxos().size, "UTXO must not be deleted")
+        assertEquals(0, f.publicKeyManager.getExternalPublicKeys().count { it.isUsed })
+        assertEquals(0, f.publicKeyManager.getInternalPublicKeys().count { it.isUsed })
+        assertEquals(0, f.storage.transactionStorage.getTransactions().size, "no PENDING tx must be persisted")
+    }
+
+    /**
+     * Sending the wallet's exact balance with subtractFeeFromAmount is the
+     * canonical use of the flag. It used to fail with InsufficientFunds because
+     * selection demanded totalInput ≥ amount + fee even in subtract-fee mode.
+     */
+    @Test
+    fun subtractFeeAllowsSendingExactBalance() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+
+        val tx = f.creator.create(
+            toAddress = externalDestination,
+            amount = 100_000, // the full balance
+            feeRate = 10,
+            subtractFeeFromAmount = true,
         )
+
+        assertEquals(1, tx.transaction.txOut.size, "exact-balance send has no change output")
+        assertEquals(100_000 - tx.fee, tx.transaction.txOut[0].amount.toLong())
+        assertEquals(0, f.storage.unspentOutputStorage.getAllUtxos().size, "balance fully spent")
+    }
+
+    /**
+     * getSendInfo must quote the same numbers create() then produces — it used
+     * to ignore subtract-fee entirely.
+     */
+    @Test
+    fun getSendInfoMatchesCreateForSubtractFee() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+
+        // Quote first — create() consumes the UTXO.
+        val info = f.creator.getSendInfo(
+            toAddress = externalDestination,
+            amount = 98_500,
+            feeRate = 10,
+            subtractFeeFromAmount = true,
+        )!!
+        val tx = f.creator.create(
+            toAddress = externalDestination,
+            amount = 98_500,
+            feeRate = 10,
+            subtractFeeFromAmount = true,
+        )
+
+        assertEquals(tx.fee, info.fee, "quoted fee must match the created transaction's fee")
+        assertEquals(tx.transaction.txOut[0].amount.toLong(), info.amount, "quoted amount must match the destination output")
+        assertEquals(tx.transaction.txOut.size == 2, info.hasChange)
+        if (info.hasChange) {
+            assertEquals(tx.transaction.txOut[1].amount.toLong(), info.change, "quoted change must match the change output")
+        }
+    }
+
+    /**
+     * Regression pin: non-subtract-fee accounting is untouched — destination
+     * gets exactly the requested amount and the fee rides on top.
+     */
+    @Test
+    fun nonSubtractFeeAccountingUnchanged() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+
+        val tx = f.creator.create(externalDestination, amount = 30_000, feeRate = 1)
+
+        assertEquals(30_000, tx.transaction.txOut[0].amount.toLong(), "destination gets the exact requested amount")
+        val outputTotal = tx.transaction.txOut.sumOf { it.amount.toLong() }
+        assertEquals(tx.fee, 100_000 - outputTotal, "reported fee equals on-chain fee")
     }
 
     @Test

@@ -124,11 +124,14 @@ class TransactionBuilder(
         // Build outputs
         val outputs = mutableListOf<TxOut>()
 
-        // Calculate actual send amount
-        val sendAmount = if (params.subtractFeeFromAmount) {
-            params.amount - selectionResult.fee
-        } else {
-            params.amount
+        // The selection is authoritative on amounts: SelectionResult.sendAmount
+        // already reflects subtract-fee semantics (the selector computed
+        // targetAmount − fee). Re-deriving it here from params.amount − fee
+        // would double-count the fee when the selector absorbed a sub-dust
+        // residual into it.
+        val sendAmount = selectionResult.sendAmount
+        require(sendAmount > 0) {
+            "Destination amount must be positive, got $sendAmount sats (fee exceeds the send amount?)"
         }
 
         // Add destination output

@@ -49,7 +49,11 @@ data class SelectionResult(
     val totalInput: Long,
 
     /**
-     * Amount being sent (excluding change).
+     * Amount the destination output will carry. Equals the requested target
+     * amount for normal sends; for subtract-fee sends the fee has already
+     * been taken out (`targetAmount − fee`). This is the authoritative
+     * destination amount — [io.sourlabs.btc.wallet.transactions.TransactionBuilder]
+     * emits it verbatim. Invariant: `sendAmount + change + fee == totalInput`.
      */
     val sendAmount: Long,
 
@@ -96,6 +100,11 @@ class UnspentOutputSelector(
      * @param destinationScriptType the script type of the *destination* output,
      *   so fee estimation uses the correct output size
      * @param strategy selection strategy
+     * @param subtractFeeFromAmount when true, the fee comes out of the target
+     *   amount instead of riding on top: inputs only need to cover
+     *   [targetAmount] itself, the returned [SelectionResult.sendAmount] is
+     *   `targetAmount − fee`, and change is `totalInput − targetAmount`. This
+     *   makes "send my exact balance" selectable (totalInput == targetAmount).
      */
     fun select(
         utxos: List<UnspentOutput>,
@@ -103,6 +112,7 @@ class UnspentOutputSelector(
         feeRate: Long,
         destinationScriptType: ScriptType,
         strategy: SelectionStrategy = SelectionStrategy.AUTOMATIC,
+        subtractFeeFromAmount: Boolean = false,
     ): SelectionResult? {
         if (utxos.isEmpty()) return null
 
@@ -112,10 +122,10 @@ class UnspentOutputSelector(
             SelectionStrategy.OLDEST_FIRST -> utxos.sortedBy { it.blockHeight ?: Int.MAX_VALUE }
             SelectionStrategy.LARGEST_FIRST -> utxos.sortedByDescending { it.value }
             SelectionStrategy.SMALLEST_FIRST -> utxos.sortedBy { it.value }
-            SelectionStrategy.PRIVACY_OPTIMIZED -> selectForPrivacy(utxos, targetAmount, feeRate, destinationScriptType)
+            SelectionStrategy.PRIVACY_OPTIMIZED -> selectForPrivacy(utxos, targetAmount, feeRate, destinationScriptType, subtractFeeFromAmount)
         }
 
-        return selectFromSorted(sortedUtxos, targetAmount, feeRate, destinationScriptType)
+        return selectFromSorted(sortedUtxos, targetAmount, feeRate, destinationScriptType, subtractFeeFromAmount)
     }
 
     /**
@@ -126,6 +136,7 @@ class UnspentOutputSelector(
         targetAmount: Long,
         feeRate: Long,
         destinationScriptType: ScriptType,
+        subtractFeeFromAmount: Boolean = false,
     ): SelectionResult? {
         val totalInput = utxos.sumOf { it.value }
 
@@ -140,25 +151,12 @@ class UnspentOutputSelector(
             feeRate = feeRate,
         )
 
-        if (totalInput < targetAmount + feeWithoutChange) {
+        val required = if (subtractFeeFromAmount) targetAmount else targetAmount + feeWithoutChange
+        if (totalInput < required) {
             return null // Insufficient funds
         }
 
-        val potentialChange = totalInput - targetAmount - feeWithChange
-        val (fee, change) = if (potentialChange > dustThreshold) {
-            feeWithChange to potentialChange
-        } else {
-            // Change would be dust — drop the change output and let the fee absorb it.
-            (totalInput - targetAmount) to 0L
-        }
-
-        return SelectionResult(
-            selectedUtxos = utxos,
-            totalInput = totalInput,
-            sendAmount = targetAmount,
-            fee = fee,
-            change = change
-        )
+        return buildResult(utxos, totalInput, targetAmount, feeWithChange, feeWithoutChange, subtractFeeFromAmount)
     }
 
     private fun selectFromSorted(
@@ -166,6 +164,7 @@ class UnspentOutputSelector(
         targetAmount: Long,
         feeRate: Long,
         destinationScriptType: ScriptType,
+        subtractFeeFromAmount: Boolean,
     ): SelectionResult? {
         val selected = mutableListOf<UnspentOutput>()
         var totalInput = 0L
@@ -186,25 +185,59 @@ class UnspentOutputSelector(
                 feeRate = feeRate,
             )
 
-            if (totalInput >= targetAmount + feeWithoutChange) {
-                val potentialChange = totalInput - targetAmount - feeWithChange
-                val (fee, change) = if (potentialChange > dustThreshold) {
-                    feeWithChange to potentialChange
-                } else {
-                    // Sub-dust change — drop the change output, fee absorbs the residual.
-                    (totalInput - targetAmount) to 0L
-                }
-                return SelectionResult(
-                    selectedUtxos = selected.toList(),
-                    totalInput = totalInput,
-                    sendAmount = targetAmount,
-                    fee = fee,
-                    change = change
-                )
+            val required = if (subtractFeeFromAmount) targetAmount else targetAmount + feeWithoutChange
+            if (totalInput >= required) {
+                return buildResult(selected.toList(), totalInput, targetAmount, feeWithChange, feeWithoutChange, subtractFeeFromAmount)
             }
         }
 
         return null // Insufficient funds
+    }
+
+    /**
+     * Compute the final amounts for a selection whose inputs cover the target.
+     *
+     * Normal sends: the destination gets [targetAmount] and the fee rides on
+     * top. Subtract-fee sends: the fee comes out of the destination
+     * (`sendAmount = targetAmount − fee`) and change is what's left over above
+     * the target (`totalInput − targetAmount`). In both modes sub-dust change
+     * is dropped and its value absorbed into the fee — matching Bitcoin Core —
+     * so `sendAmount + change + fee == totalInput` always holds. The caller is
+     * responsible for rejecting a subtract-fee [SelectionResult.sendAmount]
+     * that came out negative or below the destination's dust threshold.
+     */
+    private fun buildResult(
+        selectedUtxos: List<UnspentOutput>,
+        totalInput: Long,
+        targetAmount: Long,
+        feeWithChange: Long,
+        feeWithoutChange: Long,
+        subtractFeeFromAmount: Boolean,
+    ): SelectionResult {
+        val potentialChange = if (subtractFeeFromAmount) {
+            totalInput - targetAmount
+        } else {
+            totalInput - targetAmount - feeWithChange
+        }
+
+        return if (potentialChange > dustThreshold) {
+            SelectionResult(
+                selectedUtxos = selectedUtxos,
+                totalInput = totalInput,
+                sendAmount = if (subtractFeeFromAmount) targetAmount - feeWithChange else targetAmount,
+                fee = feeWithChange,
+                change = potentialChange,
+            )
+        } else {
+            // Sub-dust change — drop the change output, fee absorbs the residual.
+            SelectionResult(
+                selectedUtxos = selectedUtxos,
+                totalInput = totalInput,
+                sendAmount = if (subtractFeeFromAmount) targetAmount - feeWithoutChange else targetAmount,
+                fee = if (subtractFeeFromAmount) feeWithoutChange + potentialChange else totalInput - targetAmount,
+                change = 0L,
+            )
+        }
     }
 
     private fun selectForPrivacy(
@@ -212,6 +245,7 @@ class UnspentOutputSelector(
         targetAmount: Long,
         feeRate: Long,
         destinationScriptType: ScriptType,
+        subtractFeeFromAmount: Boolean,
     ): List<UnspentOutput> {
         // Simple privacy optimization: try to find a single UTXO that covers the amount
         // to avoid linking multiple UTXOs together. Use the actual fee estimate (sized
@@ -223,7 +257,8 @@ class UnspentOutputSelector(
                 outputs = listOf(destinationScriptType),
                 feeRate = feeRate,
             )
-            utxo.value >= targetAmount + fee
+            val required = if (subtractFeeFromAmount) targetAmount else targetAmount + fee
+            utxo.value >= required
         }
         if (singleUtxo != null) {
             return listOf(singleUtxo)

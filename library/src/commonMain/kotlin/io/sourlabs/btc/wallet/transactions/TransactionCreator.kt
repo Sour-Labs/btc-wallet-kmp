@@ -14,6 +14,7 @@ import io.sourlabs.btc.wallet.models.WalletPublicKey
 import io.sourlabs.btc.wallet.models.WalletTransaction
 import io.sourlabs.btc.wallet.storage.TransactionStorage
 import io.sourlabs.btc.wallet.storage.UnspentOutputStorage
+import io.sourlabs.btc.wallet.utxo.SelectionResult
 import io.sourlabs.btc.wallet.utxo.SelectionStrategy
 import io.sourlabs.btc.wallet.utxo.UnspentOutputProvider
 import io.sourlabs.btc.wallet.utxo.UnspentOutputSelector
@@ -23,7 +24,8 @@ import io.sourlabs.btc.wallet.utxo.UnspentOutputSelector
  */
 data class SendInfo(
     /**
-     * Amount to be sent.
+     * Amount the destination will receive. For subtract-fee sends this is the
+     * post-subtraction amount (requested amount − fee).
      */
     val amount: Long,
 
@@ -175,6 +177,31 @@ class TransactionCreator(
         }
     }
 
+    /**
+     * With `subtractFeeFromAmount` the destination receives `amount − fee`, and
+     * the fee isn't known until UTXO selection has run — so unlike the up-front
+     * dust check in [validateOutgoing], this check has to happen *after*
+     * selection. Throwing here, before signing and [recordOutgoingTransaction],
+     * keeps a doomed transaction (negative or sub-dust destination) from
+     * deleting UTXOs and persisting a PENDING entry that would corrupt local
+     * state until the next full sync.
+     */
+    private fun validatePostSubtractionAmount(
+        selection: SelectionResult,
+        destinationScriptType: ScriptType,
+        subtractFeeFromAmount: Boolean,
+    ) {
+        if (!subtractFeeFromAmount) return
+        val dust = FeeCalculator.dustThreshold(destinationScriptType)
+        if (selection.sendAmount < dust) {
+            throw InvalidAmountException(
+                "After subtracting the fee (${selection.fee} sats), the destination would receive " +
+                    "${selection.sendAmount} sats, below the dust threshold ($dust sats) for a " +
+                    "$destinationScriptType output. Increase the amount or lower the fee rate."
+            )
+        }
+    }
+
     private fun validateSweep(feeRate: Long) {
         if (feeRate < 1) {
             throw InvalidAmountException(
@@ -250,21 +277,26 @@ class TransactionCreator(
 
     /**
      * Get information about a potential send without creating the transaction.
+     * Reports the same amounts [create] would produce for the same arguments:
+     * [SendInfo.amount] is what the destination actually receives (post
+     * fee-subtraction when [subtractFeeFromAmount] is set).
      */
     suspend fun getSendInfo(
         toAddress: String,
         amount: Long,
         feeRate: Long,
-        strategy: SelectionStrategy = SelectionStrategy.AUTOMATIC
+        strategy: SelectionStrategy = SelectionStrategy.AUTOMATIC,
+        subtractFeeFromAmount: Boolean = false
     ): SendInfo? {
         val destinationScriptType = parseDestinationScriptType(toAddress)
-        validateOutgoing(amount, feeRate, destinationScriptType, subtractFeeFromAmount = false)
+        validateOutgoing(amount, feeRate, destinationScriptType, subtractFeeFromAmount)
         val spendableUtxos = utxoProvider.getSpendableUtxos()
-        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy)
+        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy, subtractFeeFromAmount)
             ?: return null
+        validatePostSubtractionAmount(selection, destinationScriptType, subtractFeeFromAmount)
 
         return SendInfo(
-            amount = amount,
+            amount = selection.sendAmount,
             fee = selection.fee,
             change = selection.change,
             inputCount = selection.selectedUtxos.size,
@@ -300,8 +332,9 @@ class TransactionCreator(
         val spendableUtxos = utxoProvider.getSpendableUtxos()
 
         // Select UTXOs
-        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy)
+        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy, subtractFeeFromAmount)
             ?: throw InsufficientFundsException("Insufficient funds to send $amount satoshis with fee rate $feeRate sat/vB")
+        validatePostSubtractionAmount(selection, destinationScriptType, subtractFeeFromAmount)
 
         // Get public keys for inputs
         val inputKeys = selection.selectedUtxos.map { utxo ->
@@ -365,8 +398,9 @@ class TransactionCreator(
         require(signer != null) { "Cannot create signed transactions with a watch-only wallet" }
 
         // Select UTXOs (manual)
-        val selection = selector.selectManual(utxos, amount, feeRate, destinationScriptType)
+        val selection = selector.selectManual(utxos, amount, feeRate, destinationScriptType, subtractFeeFromAmount)
             ?: throw InsufficientFundsException("Selected UTXOs insufficient for amount $amount with fee rate $feeRate")
+        validatePostSubtractionAmount(selection, destinationScriptType, subtractFeeFromAmount)
 
         // Get public keys for inputs
         val inputKeys = utxos.map { utxo ->
@@ -476,8 +510,9 @@ class TransactionCreator(
         val spendableUtxos = utxoProvider.getSpendableUtxos()
 
         // Select UTXOs
-        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy)
+        val selection = selector.select(spendableUtxos, amount, feeRate, destinationScriptType, strategy, subtractFeeFromAmount)
             ?: throw InsufficientFundsException("Insufficient funds")
+        validatePostSubtractionAmount(selection, destinationScriptType, subtractFeeFromAmount)
 
         // Get public keys for inputs
         val inputKeys = selection.selectedUtxos.map { utxo ->
