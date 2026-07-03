@@ -1,8 +1,10 @@
 package io.sourlabs.btc.wallet.transactions
 
+import fr.acinq.bitcoin.ScriptFlags
 import fr.acinq.bitcoin.Transaction
 import io.sourlabs.btc.wallet.api.InvalidAddressException
 import io.sourlabs.btc.wallet.api.InvalidAmountException
+import io.sourlabs.btc.wallet.api.SigningException
 import io.sourlabs.btc.wallet.keys.AddressConverter
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.keys.PublicKeyManager
@@ -216,6 +218,26 @@ class TransactionCreator(
     }
 
     /**
+     * Verify that the signed transaction actually satisfies Bitcoin consensus
+     * rules for the outputs it spends, using bitcoin-kmp's script interpreter.
+     * Catches what no address- or amount-level check can: an invalid signature,
+     * or a key/script mismatch between a UTXO's `scriptPubKey` and the key its
+     * `publicKeyPath` points at (crypto review F4).
+     *
+     * Must run after signing and *before* [recordOutgoingTransaction]: a
+     * transaction the network would reject must not delete UTXOs or persist a
+     * PENDING entry — that would corrupt local state until the next full sync.
+     */
+    private fun verifyConsensusValidity(unsignedTx: UnsignedTransaction, signedTx: Transaction) {
+        val prevOuts = unsignedTx.utxos.associate { it.toOutPoint() to it.toTxOut() }
+        try {
+            signedTx.correctlySpends(prevOuts, ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+        } catch (e: Exception) {
+            throw SigningException("Produced transaction failed consensus validation", e)
+        }
+    }
+
+    /**
      * Reserve the spent UTXOs locally, mark input/change keys as used, and persist a
      * `PENDING` [WalletTransaction] so the wallet immediately reflects the just-built
      * transaction. Called from each `create*` path after a successful sign, so a
@@ -364,6 +386,8 @@ class TransactionCreator(
         // Sign transaction
         val signedTx = signer.sign(unsignedTx)
 
+        verifyConsensusValidity(unsignedTx, signedTx)
+
         // Reserve UTXOs, mark keys used, and persist PENDING tx so a subsequent
         // create*() call in the same process doesn't re-select the same UTXOs
         // or hand out the same change address.
@@ -430,6 +454,8 @@ class TransactionCreator(
         // Sign transaction
         val signedTx = signer.sign(unsignedTx)
 
+        verifyConsensusValidity(unsignedTx, signedTx)
+
         recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee, changeKey)
 
         // Serialize
@@ -476,6 +502,8 @@ class TransactionCreator(
 
         // Sign transaction
         val signedTx = signer.sign(unsignedTx)
+
+        verifyConsensusValidity(unsignedTx, signedTx)
 
         // Sweep has no change output, hence no change key to mark used.
         recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee, changeKey = null)

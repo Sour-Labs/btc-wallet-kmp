@@ -26,7 +26,7 @@ Update Status as tasks land (`todo` → `in progress` → `PR #NN` → `done`).
 |---|------|----------|----------|--------|
 | 1 | Fix Taproot double-tweak + signature-validity tests | P0 | F1, F4 (tests) | PR #53 |
 | 2 | Fix `subtractFeeFromAmount` fee accounting + amount validation | P0 | F2, F3 | PR #54 |
-| 3 | Consensus-validity gate after signing | P0 | F4 | todo |
+| 3 | Consensus-validity gate after signing | P0 | F4 | PR #55 |
 | 4 | Validate extended-key version prefix against network | P1 | F5 | todo |
 | 5 | Restore-scan robustness (mnemonic validation + probe failures) | P1 | F7, F8 | todo |
 | 6 | Full-sync convergence for gap-limit extensions | P1 | F6 | todo |
