@@ -85,6 +85,18 @@ kotlin {
     }
 }
 
+// EntropySourceTest reads the key-generation sources off disk, which Gradle
+// cannot infer from the classpath. Without declaring them, a change to a
+// platform SecureRandom actual leaves jvmTest UP-TO-DATE and the guard never
+// runs, which is the one failure mode a guard must not have.
+tasks.named<Test>("jvmTest") {
+    inputs.files(
+        fileTree("src") { include("*Main/kotlin/io/sourlabs/btc/wallet/keys/**/*.kt") }
+    )
+        .withPropertyName("keyGenerationSources")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
 mavenPublishing {
     publishToMavenCentral()
 
