@@ -300,6 +300,15 @@ class SyncManager(
     }
 
     /**
+     * Fetch a transaction's raw hex from the active explorer.
+     * @throws IllegalStateException if the API has not been initialized by [start]
+     */
+    suspend fun getRawTransaction(txId: String): String {
+        val currentApi = api ?: throw IllegalStateException("API not initialized")
+        return currentApi.getRawTransaction(txId)
+    }
+
+    /**
      * Get current block height.
      */
     suspend fun getCurrentBlockHeight(): Int? {

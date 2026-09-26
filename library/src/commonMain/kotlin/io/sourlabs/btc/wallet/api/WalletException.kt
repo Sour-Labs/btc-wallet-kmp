@@ -71,6 +71,36 @@ class SigningException(
 ) : WalletException(message, cause)
 
 /**
+ * Exception thrown when the wallet cannot build a PSBT for an external signer.
+ * Insufficient funds still raise [io.sourlabs.btc.wallet.transactions.InsufficientFundsException].
+ */
+sealed class PsbtException(
+    message: String,
+    cause: Throwable? = null
+) : WalletException(message, cause) {
+
+    /**
+     * The wallet has no `[fingerprint/path]` key origin: it was built from a bare
+     * extended public key, or from a descriptor without one. A signer finds its
+     * keys in a PSBT through that origin, so it could not sign.
+     */
+    class MissingKeyOrigin(
+        message: String = "Wallet has no key origin; build it from a descriptor with [fingerprint/path]"
+    ) : PsbtException(message)
+
+    /** The wallet is multisig, which cannot build a PSBT yet. */
+    class MultisigNotSupported(
+        message: String = "Multisig wallets cannot build a PSBT"
+    ) : PsbtException(message)
+
+    /** The transaction that created one of the spent outputs could not be fetched. */
+    class ParentTransactionUnavailable(
+        val txId: String,
+        cause: Throwable? = null
+    ) : PsbtException("Could not fetch parent transaction $txId", cause)
+}
+
+/**
  * Exception thrown when an output descriptor cannot be parsed or is unsupported.
  *
  * Supported wrappers: pkh, sh(wpkh), wpkh, tr (key-path only).

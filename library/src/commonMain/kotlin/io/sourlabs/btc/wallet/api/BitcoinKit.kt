@@ -19,6 +19,8 @@ import io.sourlabs.btc.wallet.sync.MultiPurposeScanner
 import io.sourlabs.btc.wallet.sync.SyncManager
 import io.sourlabs.btc.wallet.sync.WalletScanResult
 import io.sourlabs.btc.wallet.transactions.CreatedTransaction
+import io.sourlabs.btc.wallet.transactions.PsbtCreator
+import io.sourlabs.btc.wallet.transactions.PsbtDraft
 import io.sourlabs.btc.wallet.transactions.SendInfo
 import io.sourlabs.btc.wallet.transactions.TransactionCreator
 import io.sourlabs.btc.wallet.utxo.SelectionStrategy
@@ -42,6 +44,7 @@ class BitcoinKit private constructor(
     private val addressConverter: AddressConverter,
     private val utxoProvider: UnspentOutputProvider,
     private val transactionCreator: TransactionCreator,
+    private val psbtCreator: PsbtCreator,
     private val syncManager: SyncManager,
     private val storage: WalletStorage,
     private val scope: CoroutineScope
@@ -233,6 +236,39 @@ class BitcoinKit private constructor(
             feeRate = feeRate,
             strategy = strategy,
             rbfEnabled = rbfEnabled,
+            subtractFeeFromAmount = subtractFeeFromAmount
+        )
+    }
+
+    /**
+     * Build an unsigned PSBT (BIP-174, version 0) for the hardware wallet that
+     * holds this watch-only wallet's keys. Coins are selected as in
+     * [createTransaction], with RBF enabled.
+     *
+     * Changes no wallet state: no UTXO is reserved and no key is marked used,
+     * because the PSBT may never come back signed.
+     *
+     * Call it on a started kit: segwit v0 and legacy inputs carry their parent
+     * transactions, which are fetched from the explorer.
+     *
+     * @throws PsbtException.MissingKeyOrigin if the wallet wasn't built from a
+     *   descriptor with a `[fingerprint/path]` key origin
+     * @throws PsbtException.MultisigNotSupported for a multisig wallet
+     * @throws PsbtException.ParentTransactionUnavailable if a parent transaction
+     *   could not be fetched
+     * @throws io.sourlabs.btc.wallet.transactions.InsufficientFundsException if
+     *   the spendable balance can't cover the amount and fee
+     */
+    suspend fun buildPsbt(
+        toAddress: String,
+        amount: Long,
+        feeRate: Long,
+        subtractFeeFromAmount: Boolean = false
+    ): PsbtDraft {
+        return psbtCreator.build(
+            toAddress = toAddress,
+            amount = amount,
+            feeRate = feeRate,
             subtractFeeFromAmount = subtractFeeFromAmount
         )
     }
@@ -438,6 +474,11 @@ class BitcoinKit private constructor(
                 blockInfoStorage = storage.blockInfoStorage,
                 syncConfigs = allSyncConfigs
             )
+            val psbtCreator = PsbtCreator(
+                walletConfig = walletConfig,
+                transactionCreator = transactionCreator,
+                fetchRawTransaction = syncManager::getRawTransaction
+            )
 
             return BitcoinKit(
                 hdWalletManager = hdWalletManager,
@@ -445,6 +486,7 @@ class BitcoinKit private constructor(
                 addressConverter = addressConverter,
                 utxoProvider = utxoProvider,
                 transactionCreator = transactionCreator,
+                psbtCreator = psbtCreator,
                 syncManager = syncManager,
                 storage = storage,
                 scope = scope
