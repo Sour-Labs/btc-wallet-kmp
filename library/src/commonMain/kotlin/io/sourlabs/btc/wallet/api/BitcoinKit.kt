@@ -249,8 +249,9 @@ class BitcoinKit private constructor(
      * because the PSBT may never come back signed.
      *
      * Segwit v0 and legacy inputs carry their parent transactions, read from
-     * local storage when a sync saved them and fetched from the explorer
-     * otherwise.
+     * local storage when a sync saved them. A missing one is fetched through
+     * the running sync's explorer, as [broadcastTransaction] is sent, so that
+     * fetch fails on a kit that is not running.
      *
      * @throws PsbtException.MissingKeyOrigin if the wallet wasn't built from a
      *   descriptor with a `[fingerprint/path]` key origin
@@ -259,8 +260,8 @@ class BitcoinKit private constructor(
      * @throws PsbtException.MultisigNotSupported for a multisig wallet
      * @throws PsbtException.ParentTransactionUnavailable if a parent transaction
      *   could not be fetched
-     * @throws PsbtException.ParentTransactionMismatch if the explorer's parent
-     *   transaction contradicts the wallet's UTXO
+     * @throws PsbtException.ParentTransactionMismatch if a parent transaction
+     *   contradicts the wallet's records; a [refresh] can repair a stale UTXO
      * @throws io.sourlabs.btc.wallet.transactions.InsufficientFundsException if
      *   the spendable balance can't cover the amount and fee
      */

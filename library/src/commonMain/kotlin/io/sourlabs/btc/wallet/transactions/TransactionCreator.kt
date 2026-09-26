@@ -260,7 +260,6 @@ class TransactionCreator(
     private suspend fun recordOutgoingTransaction(
         unsignedTx: UnsignedTransaction,
         signedTx: Transaction,
-        fee: Long,
     ) {
         for (key in unsignedTx.publicKeys.distinctBy { it.path }) {
             publicKeyManager.markAsUsed(key.path)
@@ -292,7 +291,7 @@ class TransactionCreator(
                 status = TransactionStatus.PENDING,
                 type = TransactionType.OUTGOING,
                 amount = netAmount,
-                fee = fee,
+                fee = unsignedTx.fee,
             )
         )
     }
@@ -391,7 +390,7 @@ class TransactionCreator(
         // Reserve UTXOs, mark keys used, and persist PENDING tx so a subsequent
         // create*() call in the same process doesn't re-select the same UTXOs
         // or hand out the same change address.
-        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee)
+        recordOutgoingTransaction(unsignedTx, signedTx)
 
         // Serialize
         val rawTx = Transaction.write(signedTx)
@@ -456,7 +455,7 @@ class TransactionCreator(
 
         verifyConsensusValidity(unsignedTx, signedTx)
 
-        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee)
+        recordOutgoingTransaction(unsignedTx, signedTx)
 
         // Serialize
         val rawTx = Transaction.write(signedTx)
@@ -505,7 +504,7 @@ class TransactionCreator(
 
         verifyConsensusValidity(unsignedTx, signedTx)
 
-        recordOutgoingTransaction(unsignedTx, signedTx, unsignedTx.fee)
+        recordOutgoingTransaction(unsignedTx, signedTx)
 
         // Serialize
         val rawTx = Transaction.write(signedTx)

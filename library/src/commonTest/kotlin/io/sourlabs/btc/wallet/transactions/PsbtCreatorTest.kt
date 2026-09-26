@@ -316,6 +316,21 @@ class PsbtCreatorTest {
     }
 
     @Test
+    fun kitThatIsNotRunningCannotFetchAMissingParent() = runTest {
+        val config = descriptorConfig(Purpose.BIP84)
+        val f = newFixture(config)
+        val utxo = f.fund(f.externalKey(0) to 100_000).single()
+
+        val kit = BitcoinKit.builder(config).storage(f.storage).build()
+        val e = assertFailsWith<PsbtException.ParentTransactionUnavailable> {
+            kit.buildPsbt(externalDestination, amount = 30_000, feeRate = 2)
+        }
+
+        assertEquals(utxo.toOutPoint().txid.toString(), e.txId)
+        assertIs<IllegalStateException>(e.cause)
+    }
+
+    @Test
     fun psbtSurvivesSerializationUnchanged() = runTest {
         val f = newFixture(descriptorConfig(Purpose.BIP84))
         f.fund(f.externalKey(0) to 60_000, f.externalKey(1) to 60_000)

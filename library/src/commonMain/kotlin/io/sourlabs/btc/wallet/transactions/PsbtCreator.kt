@@ -187,13 +187,14 @@ internal class PsbtCreator(
                 outputIndex = outputIndex,
                 derivationPaths = fields.derivationPaths
             )
-            else -> updateWitnessOutput(
+            ScriptType.P2WPKH, ScriptType.P2SH_P2WPKH, ScriptType.P2TR -> updateWitnessOutput(
                 outputIndex = outputIndex,
                 redeemScript = fields.redeemScript,
                 derivationPaths = fields.derivationPaths,
                 taprootInternalKey = fields.taprootInternalKey,
                 taprootDerivationPaths = fields.taprootDerivationPaths
             )
+            ScriptType.P2SH, ScriptType.P2WSH -> error("${key.scriptType} change in a single-key wallet")
         }.orThrow()
     }
 }

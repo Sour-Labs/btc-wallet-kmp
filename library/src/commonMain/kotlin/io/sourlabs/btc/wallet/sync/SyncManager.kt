@@ -300,20 +300,15 @@ class SyncManager(
     }
 
     /**
-     * Fetch a transaction's raw hex from the active explorer.
-     *
-     * Works whether or not the kit is syncing: before [start], after a
-     * [SyncMode.OneShot] sync, or after [stop] there is no client, so a
-     * short-lived one is used.
+     * Fetch a transaction's raw hex from the active explorer. Like
+     * [broadcastTransaction], it needs a running sync: before [start], after a
+     * [SyncMode.OneShot] sync and after [stop] there is no client.
+     * @throws IllegalStateException when there is no client
      */
     suspend fun getRawTransaction(txId: String): String {
-        api?.let { return it.getRawTransaction(txId) }
-        val transientApi = buildApi()
-        try {
-            return transientApi.getRawTransaction(txId)
-        } finally {
-            transientApi.close()
-        }
+        val currentApi = api
+            ?: throw IllegalStateException("No explorer client: the kit is not running a Continuous or IncrementalOnly sync")
+        return currentApi.getRawTransaction(txId)
     }
 
     /**

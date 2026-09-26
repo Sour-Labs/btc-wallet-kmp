@@ -109,9 +109,11 @@ sealed class PsbtException(
     ) : PsbtException("Could not fetch parent transaction $txId", cause)
 
     /**
-     * The explorer's data contradicts itself: it served a transaction that
-     * isn't [txId], or one whose output differs from the UTXO the wallet
-     * synced. Retrying the same explorer won't help.
+     * A parent transaction contradicts the wallet's records: the explorer
+     * served a transaction that isn't [txId], or the parent's output differs
+     * from the stored UTXO (a stale or wrong UTXO record, whether the parent
+     * came from storage or from the explorer). A refresh can repair the local
+     * records; an explorer that serves the wrong transaction needs replacing.
      */
     class ParentTransactionMismatch(
         val txId: String
