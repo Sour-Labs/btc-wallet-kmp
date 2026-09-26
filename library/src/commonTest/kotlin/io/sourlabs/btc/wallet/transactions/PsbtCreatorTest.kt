@@ -30,13 +30,17 @@ import io.sourlabs.btc.wallet.keys.PublicKeyManager
 import io.sourlabs.btc.wallet.keys.SeedManager.toSeed
 import io.sourlabs.btc.wallet.models.BlockInfo
 import io.sourlabs.btc.wallet.models.Purpose
+import io.sourlabs.btc.wallet.models.TransactionStatus
+import io.sourlabs.btc.wallet.models.TransactionType
 import io.sourlabs.btc.wallet.models.UnspentOutput
 import io.sourlabs.btc.wallet.models.WalletPublicKey
+import io.sourlabs.btc.wallet.models.WalletTransaction
 import io.sourlabs.btc.wallet.storage.InMemoryWalletStorage
 import io.sourlabs.btc.wallet.utxo.UnspentOutputProvider
 import kotlinx.coroutines.test.runTest
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
+import kotlin.test.assertContains
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -104,7 +108,7 @@ class PsbtCreatorTest {
         )
         val parents = mutableMapOf<String, Transaction>()
         val fetchedTxIds = mutableListOf<String>()
-        val creator = PsbtCreator(config, transactionCreator) { txId ->
+        val creator = PsbtCreator(config, transactionCreator, storage.transactionStorage) { txId ->
             fetchedTxIds += txId
             ByteVector(Transaction.write(parents.getValue(txId))).toHex()
         }
@@ -114,8 +118,12 @@ class PsbtCreatorTest {
     /**
      * Pay each of [payments] from one new parent transaction and save the
      * resulting UTXOs. Output 0 pays someone else, so a wrong output index shows.
+     * The explorer serves the parent; with [stored], sync also saved it locally.
      */
-    private suspend fun Fixture.fund(vararg payments: Pair<WalletPublicKey, Long>): List<UnspentOutput> {
+    private suspend fun Fixture.fund(
+        vararg payments: Pair<WalletPublicKey, Long>,
+        stored: Boolean = false,
+    ): List<UnspentOutput> {
         val decoy = TxOut(Satoshi(1_000), ByteVector(converter.addressToScriptPubKey(externalDestination)!!))
         val parent = Transaction(
             version = 2,
@@ -137,8 +145,18 @@ class PsbtCreatorTest {
             )
         }
         storage.unspentOutputStorage.saveUtxos(utxos)
+        if (stored) storage.transactionStorage.saveTransaction(incoming(parent))
         return utxos
     }
+
+    private fun incoming(tx: Transaction) = WalletTransaction(
+        txId = tx.txid.toString(),
+        transaction = tx,
+        blockHeight = 100,
+        status = TransactionStatus.CONFIRMED,
+        type = TransactionType.INCOMING,
+        amount = 0,
+    )
 
     private suspend fun Fixture.externalKey(index: Int): WalletPublicKey = publicKeyManager.externalKeyAt(index)
 
@@ -173,27 +191,58 @@ class PsbtCreatorTest {
     }
 
     @Test
-    fun changeOutputCarriesItsDerivationAndPaymentDoesNot() = runTest {
-        val f = newFixture(descriptorConfig(Purpose.BIP84))
-        f.fund(f.externalKey(0) to 100_000)
-        val changeKey = f.firstChangeKey()
+    fun changeOutputIsMarkedAsChangeForEveryScriptType() = runTest {
+        for (purpose in Purpose.entries) {
+            val f = newFixture(descriptorConfig(purpose))
+            f.fund(f.externalKey(0) to 100_000)
+            val changeKey = f.firstChangeKey()
 
-        val draft = f.creator.build(externalDestination, amount = 30_000, feeRate = 2, subtractFeeFromAmount = false)
-        val psbt = decode(draft)
+            val draft = f.creator.build(externalDestination, amount = 30_000, feeRate = 2, subtractFeeFromAmount = false)
+            val psbt = decode(draft)
 
-        assertEquals(2, psbt.outputs.size)
-        val payment = psbt.global.tx.txOut.indexOfFirst {
-            it.publicKeyScript.contentEquals(f.converter.addressToScriptPubKey(externalDestination)!!)
+            assertEquals(2, psbt.outputs.size, "$purpose")
+            val payment = psbt.global.tx.txOut.indexOfFirst {
+                it.publicKeyScript.contentEquals(f.converter.addressToScriptPubKey(externalDestination)!!)
+            }
+            assertTrue(psbt.outputs[payment].derivationPaths.isEmpty(), "$purpose payment")
+            assertTrue(psbt.outputs[payment].taprootDerivationPaths.isEmpty(), "$purpose payment")
+            // Read back, an output's class depends on which scripts it carries,
+            // so compare the fields, not the classes.
+            val change = psbt.outputs[1 - payment]
+            val changePath = KeyPath("m/${purpose.value}'/0'/0'/1/${changeKey.index}")
+            if (purpose == Purpose.BIP86) {
+                val internalKey = XonlyPublicKey(changeKey.publicKey)
+                assertEquals(internalKey, change.taprootInternalKey, "$purpose")
+                val taprootDerivation = change.taprootDerivationPaths.getValue(internalKey)
+                assertEquals(masterFingerprint, taprootDerivation.masterKeyFingerprint, "$purpose")
+                assertEquals(changePath, taprootDerivation.keyPath, "$purpose")
+            } else {
+                assertEquals(
+                    mapOf(changeKey.publicKey to KeyPathWithMaster(masterFingerprint, changePath)),
+                    change.derivationPaths,
+                    "$purpose",
+                )
+            }
+            val redeemScript = if (purpose == Purpose.BIP49) Script.pay2wpkh(changeKey.publicKey) else null
+            assertEquals(redeemScript, change.redeemScript, "$purpose redeem script")
+            assertEquals(30_000, draft.amount, "$purpose")
+            assertEquals(Satoshi(draft.fee), psbt.computeFees(), "$purpose")
         }
-        // Read back, an output with only a derivation parses as "unspecified",
-        // so compare the derivations, not the output classes.
-        assertTrue(psbt.outputs[payment].derivationPaths.isEmpty())
-        assertEquals(
-            mapOf(changeKey.publicKey to derivation("m/84'/0'/0'/1/${changeKey.index}")),
-            psbt.outputs[1 - payment].derivationPaths,
-        )
-        assertEquals(30_000, draft.amount)
-        assertEquals(Satoshi(draft.fee), psbt.computeFees())
+    }
+
+    @Test
+    fun derivationIsSerializedAsBip174Requires() = runTest {
+        val f = newFixture(descriptorConfig(Purpose.BIP84))
+        val key = f.externalKey(0)
+        f.fund(key to 100_000)
+
+        val psbtHex = ByteVector(Base64.decode(f.creator.build(externalDestination, 30_000, 2, false).base64)).toHex()
+
+        // PSBT_IN_BIP32_DERIVATION: key 0x06 || pubkey, value = fingerprint bytes
+        // as in the origin, then each path step as a 32-bit little-endian integer.
+        val entry = "22" + "06" + key.publicKey.value.toHex() +
+            "18" + "73c5da0a" + "54000080" + "00000080" + "00000080" + "00000000" + "00000000"
+        assertContains(psbtHex, entry)
     }
 
     @Test
@@ -215,7 +264,6 @@ class PsbtCreatorTest {
         val f = newFixture(descriptorConfig(Purpose.BIP86))
         val key = f.externalKey(0)
         f.fund(key to 100_000)
-        val changeKey = f.firstChangeKey()
 
         val psbt = decode(f.creator.build(externalDestination, amount = 30_000, feeRate = 2, subtractFeeFromAmount = false))
 
@@ -227,13 +275,44 @@ class PsbtCreatorTest {
         assertEquals(KeyPath("m/86'/0'/0'/0/0"), inputDerivation.keyPath)
         assertNull(input.nonWitnessUtxo)
         assertTrue(f.fetchedTxIds.isEmpty(), "taproot inputs need no parent fetch")
+    }
 
-        val change = psbt.outputs.single { it.taprootInternalKey != null }
-        assertEquals(XonlyPublicKey(changeKey.publicKey), change.taprootInternalKey)
-        assertEquals(
-            KeyPath("m/86'/0'/0'/1/${changeKey.index}"),
-            change.taprootDerivationPaths.getValue(XonlyPublicKey(changeKey.publicKey)).keyPath,
-        )
+    @Test
+    fun parentsSavedBySyncAreNotFetched() = runTest {
+        val f = newFixture(descriptorConfig(Purpose.BIP84))
+        val utxo = f.fund(f.externalKey(0) to 100_000, stored = true).single()
+
+        val psbt = decode(f.creator.build(externalDestination, amount = 30_000, feeRate = 2, subtractFeeFromAmount = false))
+
+        assertTrue(f.fetchedTxIds.isEmpty())
+        assertEquals(f.parents.getValue(utxo.toOutPoint().txid.toString()), psbt.inputs.single().nonWitnessUtxo)
+    }
+
+    @Test
+    fun storedParentThatIsNotTheRightTransactionIsFetched() = runTest {
+        val f = newFixture(descriptorConfig(Purpose.BIP84))
+        val utxo = f.fund(f.externalKey(0) to 100_000).single()
+        val parentTxId = utxo.toOutPoint().txid.toString()
+        // Saved under the parent's txid, but rebuilt wrong (another lock time).
+        val parent = f.parents.getValue(parentTxId)
+        f.storage.transactionStorage.saveTransaction(incoming(parent.copy(lockTime = 1)).copy(txId = parentTxId))
+
+        val psbt = decode(f.creator.build(externalDestination, amount = 30_000, feeRate = 2, subtractFeeFromAmount = false))
+
+        assertEquals(listOf(parentTxId), f.fetchedTxIds)
+        assertEquals(parent, psbt.inputs.single().nonWitnessUtxo)
+    }
+
+    @Test
+    fun kitBuildsFromStoredParentsWithoutSyncing() = runTest {
+        val config = descriptorConfig(Purpose.BIP84)
+        val f = newFixture(config)
+        f.fund(f.externalKey(0) to 100_000, stored = true)
+
+        val kit = BitcoinKit.builder(config).storage(f.storage).build()
+        val psbt = decode(kit.buildPsbt(externalDestination, amount = 30_000, feeRate = 2))
+
+        assertNotNull(psbt.inputs.single().nonWitnessUtxo)
     }
 
     @Test
@@ -293,6 +372,21 @@ class PsbtCreatorTest {
     }
 
     @Test
+    fun keyOriginThatDoesNotDescribeTheAccountKeyIsRefused() = runTest {
+        val bip84 = WalletConfig.FromMnemonic(testMnemonic, purpose = Purpose.BIP84)
+        val xpub = HDWalletManager.fromConfig(bip84).accountXpub.encode(testnet = false)
+        // No path, one step too many, and the wrong account for this key.
+        val badOrigins = listOf("[73c5da0a]", "[73c5da0a/84h/0h/0h/0]", "[73c5da0a/84h/0h/1h]")
+        for (origin in badOrigins) {
+            val body = "wpkh($origin$xpub/<0;1>/*)"
+            val kit = BitcoinKit.builder(WalletConfig.WatchOnlyDescriptor("$body#${DescriptorChecksum.compute(body)}")).build()
+            assertFailsWith<PsbtException.KeyOriginMismatch>(origin) {
+                kit.buildPsbt(externalDestination, amount = 30_000, feeRate = 2)
+            }
+        }
+    }
+
+    @Test
     fun multisigWalletIsRefused() = runTest {
         // A 2-of-3 Bitkey export with no funds (same as BitcoinKitMultisigBuilderTest).
         val body = "wsh(sortedmulti(2," +
@@ -330,10 +424,25 @@ class PsbtCreatorTest {
         val parent = f.parents.getValue(parentTxId)
         f.parents[parentTxId] = parent.copy(txOut = parent.txOut.map { it.copy(amount = it.amount + Satoshi(1)) })
 
-        val e = assertFailsWith<PsbtException.ParentTransactionUnavailable> {
+        val e = assertFailsWith<PsbtException.ParentTransactionMismatch> {
             f.creator.build(externalDestination, amount = 30_000, feeRate = 2, subtractFeeFromAmount = false)
         }
         assertEquals(parentTxId, e.txId)
+    }
+
+    @Test
+    fun utxoThatDisagreesWithItsParentIsRefused() = runTest {
+        val f = newFixture(descriptorConfig(Purpose.BIP84))
+        val utxo = f.fund(f.externalKey(0) to 100_000).single()
+        // Sync recorded a smaller amount than the authentic parent pays: fee and
+        // change computed from it would be wrong.
+        f.storage.unspentOutputStorage.deleteUtxos(listOf(utxo.id))
+        f.storage.unspentOutputStorage.saveUtxo(utxo.copy(value = 60_000))
+
+        val e = assertFailsWith<PsbtException.ParentTransactionMismatch> {
+            f.creator.build(externalDestination, amount = 30_000, feeRate = 2, subtractFeeFromAmount = false)
+        }
+        assertEquals(utxo.toOutPoint().txid.toString(), e.txId)
     }
 
     @Test

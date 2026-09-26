@@ -301,11 +301,19 @@ class SyncManager(
 
     /**
      * Fetch a transaction's raw hex from the active explorer.
-     * @throws IllegalStateException if the API has not been initialized by [start]
+     *
+     * Works whether or not the kit is syncing: before [start], after a
+     * [SyncMode.OneShot] sync, or after [stop] there is no client, so a
+     * short-lived one is used.
      */
     suspend fun getRawTransaction(txId: String): String {
-        val currentApi = api ?: throw IllegalStateException("API not initialized")
-        return currentApi.getRawTransaction(txId)
+        api?.let { return it.getRawTransaction(txId) }
+        val transientApi = buildApi()
+        try {
+            return transientApi.getRawTransaction(txId)
+        } finally {
+            transientApi.close()
+        }
     }
 
     /**

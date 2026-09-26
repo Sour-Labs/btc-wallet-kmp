@@ -88,6 +88,15 @@ sealed class PsbtException(
         message: String = "Wallet has no key origin; build it from a descriptor with [fingerprint/path]"
     ) : PsbtException(message)
 
+    /**
+     * The key origin doesn't describe the wallet's account key: its path must
+     * have one step per BIP-32 level and end at that key's child number.
+     * Derivations built from it would match no key the signer holds.
+     */
+    class KeyOriginMismatch(
+        val keyOrigin: String
+    ) : PsbtException("Key origin $keyOrigin does not describe the wallet's account key")
+
     /** The wallet is multisig, which cannot build a PSBT yet. */
     class MultisigNotSupported(
         message: String = "Multisig wallets cannot build a PSBT"
@@ -98,6 +107,15 @@ sealed class PsbtException(
         val txId: String,
         cause: Throwable? = null
     ) : PsbtException("Could not fetch parent transaction $txId", cause)
+
+    /**
+     * The explorer's data contradicts itself: it served a transaction that
+     * isn't [txId], or one whose output differs from the UTXO the wallet
+     * synced. Retrying the same explorer won't help.
+     */
+    class ParentTransactionMismatch(
+        val txId: String
+    ) : PsbtException("Parent transaction $txId does not match the wallet's records")
 }
 
 /**

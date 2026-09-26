@@ -248,14 +248,19 @@ class BitcoinKit private constructor(
      * Changes no wallet state: no UTXO is reserved and no key is marked used,
      * because the PSBT may never come back signed.
      *
-     * Call it on a started kit: segwit v0 and legacy inputs carry their parent
-     * transactions, which are fetched from the explorer.
+     * Segwit v0 and legacy inputs carry their parent transactions, read from
+     * local storage when a sync saved them and fetched from the explorer
+     * otherwise.
      *
      * @throws PsbtException.MissingKeyOrigin if the wallet wasn't built from a
      *   descriptor with a `[fingerprint/path]` key origin
+     * @throws PsbtException.KeyOriginMismatch if that origin doesn't describe
+     *   the descriptor's account key
      * @throws PsbtException.MultisigNotSupported for a multisig wallet
      * @throws PsbtException.ParentTransactionUnavailable if a parent transaction
      *   could not be fetched
+     * @throws PsbtException.ParentTransactionMismatch if the explorer's parent
+     *   transaction contradicts the wallet's UTXO
      * @throws io.sourlabs.btc.wallet.transactions.InsufficientFundsException if
      *   the spendable balance can't cover the amount and fee
      */
@@ -477,6 +482,7 @@ class BitcoinKit private constructor(
             val psbtCreator = PsbtCreator(
                 walletConfig = walletConfig,
                 transactionCreator = transactionCreator,
+                transactionStorage = storage.transactionStorage,
                 fetchRawTransaction = syncManager::getRawTransaction
             )
 

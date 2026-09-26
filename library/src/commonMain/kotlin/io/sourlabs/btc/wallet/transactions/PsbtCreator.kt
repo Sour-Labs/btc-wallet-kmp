@@ -18,10 +18,8 @@ import io.sourlabs.btc.wallet.descriptors.OutputDescriptor
 import io.sourlabs.btc.wallet.models.ScriptType
 import io.sourlabs.btc.wallet.models.UnspentOutput
 import io.sourlabs.btc.wallet.models.WalletPublicKey
+import io.sourlabs.btc.wallet.storage.TransactionStorage
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlin.io.encoding.Base64
 
 /**
@@ -54,12 +52,14 @@ data class PsbtDraft(
  *
  * Segwit v0 and legacy inputs also carry their whole parent transaction
  * (NON_WITNESS_UTXO): since the 2020 segwit fee attack, hardware wallets check
- * input amounts against it. Taproot inputs don't need it, because a BIP-341
- * signature commits to the amount of every input.
+ * input amounts against it. Parents come from local storage when sync saved
+ * them, else from the explorer. Taproot inputs don't need a parent, because a
+ * BIP-341 signature commits to the amount of every input.
  */
 internal class PsbtCreator(
     private val walletConfig: WalletConfig,
     private val transactionCreator: TransactionCreator,
+    private val transactionStorage: TransactionStorage,
     private val fetchRawTransaction: suspend (txId: String) -> String
 ) {
     /**
@@ -79,11 +79,13 @@ internal class PsbtCreator(
             feeRate = feeRate,
             subtractFeeFromAmount = subtractFeeFromAmount
         )
-        val parentTxIds = unsignedTx.utxos.zip(unsignedTx.publicKeys)
+        // One at a time: after a sync, parents are in storage, and a burst of
+        // requests to a public explorer gets rate-limited (HTTP 429 isn't retried).
+        val parents = unsignedTx.utxos.zip(unsignedTx.publicKeys)
             .filter { (_, key) -> key.scriptType != ScriptType.P2TR }
             .map { (utxo, _) -> utxo.toOutPoint().txid }
             .toSet()
-        val parents = fetchParents(parentTxIds)
+            .associateWith { txId -> parentTransaction(txId) }
 
         var psbt = Psbt(unsignedTx.transaction)
         unsignedTx.utxos.zip(unsignedTx.publicKeys).forEach { (utxo, key) ->
@@ -105,18 +107,30 @@ internal class PsbtCreator(
         )
     }
 
+    /**
+     * The key origin a signer finds its keys through. It must describe the
+     * account key the descriptor holds: one path step per BIP-32 level
+     * (HDWalletManager requires depth 3), ending at that key's child number.
+     */
     private fun singleKeyOrigin(): Descriptor.KeyOrigin {
         val descriptor = (walletConfig as? WalletConfig.WatchOnlyDescriptor)?.parsedOutputDescriptor
         if (descriptor is OutputDescriptor.Multisig) throw PsbtException.MultisigNotSupported()
-        return (descriptor as? OutputDescriptor.SingleKey)?.descriptor?.keyOrigin
-            ?: throw PsbtException.MissingKeyOrigin()
+        val singleKey = (descriptor as? OutputDescriptor.SingleKey)?.descriptor
+        val keyOrigin = singleKey?.keyOrigin ?: throw PsbtException.MissingKeyOrigin()
+        val accountKey = DeterministicWallet.ExtendedPublicKey.decode(singleKey.extendedPublicKey).second
+        val originPath = keyOrigin.path.map { it.childNumber() }
+        if (originPath.size != accountKey.depth || originPath.lastOrNull() != accountKey.path.lastChildNumber) {
+            throw PsbtException.KeyOriginMismatch(keyOrigin.toString())
+        }
+        return keyOrigin
     }
 
-    private suspend fun fetchParents(txIds: Set<TxId>): Map<TxId, Transaction> = coroutineScope {
-        txIds.map { txId -> async { txId to fetchParent(txId) } }.awaitAll().toMap()
-    }
-
-    private suspend fun fetchParent(txId: TxId): Transaction {
+    private suspend fun parentTransaction(txId: TxId): Transaction {
+        // Stored transactions were rebuilt from explorer data; a wrong one is
+        // fetched again rather than trusted.
+        transactionStorage.getTransaction(txId.toString())?.transaction
+            ?.takeIf { it.txid == txId }
+            ?.let { return it }
         val tx = try {
             Transaction.read(fetchRawTransaction(txId.toString()))
         } catch (e: CancellationException) {
@@ -124,9 +138,7 @@ internal class PsbtCreator(
         } catch (e: Exception) {
             throw PsbtException.ParentTransactionUnavailable(txId.toString(), e)
         }
-        // A signer trusts the amounts in this transaction, so it must be the one
-        // the input spends, whatever the explorer returned.
-        if (tx.txid != txId) throw PsbtException.ParentTransactionUnavailable(txId.toString())
+        if (tx.txid != txId) throw PsbtException.ParentTransactionMismatch(txId.toString())
         return tx
     }
 
@@ -136,33 +148,30 @@ internal class PsbtCreator(
         keyOrigin: Descriptor.KeyOrigin,
         parent: Transaction?
     ): Psbt {
-        val derivation = keyOrigin.derivationOf(key)
+        // Fee and change were computed from the stored UTXO; the signer checks
+        // amounts against the parent, so the two must agree.
+        if (parent != null && parent.txOut.getOrNull(utxo.outputIndex) != utxo.toTxOut()) {
+            throw PsbtException.ParentTransactionMismatch(parent.txid.toString())
+        }
+        val fields = SignerFields(key, keyOrigin)
         return when (key.scriptType) {
-            ScriptType.P2WPKH -> updateWitnessInputTx(
-                inputTx = requireNotNull(parent),
-                outputIndex = utxo.outputIndex,
-                derivationPaths = mapOf(key.publicKey to derivation)
-            )
-            ScriptType.P2SH_P2WPKH -> updateWitnessInputTx(
-                inputTx = requireNotNull(parent),
-                outputIndex = utxo.outputIndex,
-                redeemScript = Script.pay2wpkh(key.publicKey),
-                derivationPaths = mapOf(key.publicKey to derivation)
-            )
             ScriptType.P2PKH -> updateNonWitnessInput(
                 inputTx = requireNotNull(parent),
                 outputIndex = utxo.outputIndex,
-                derivationPaths = mapOf(key.publicKey to derivation)
+                derivationPaths = fields.derivationPaths
             )
-            ScriptType.P2TR -> {
-                val internalKey = XonlyPublicKey(key.publicKey)
-                updateWitnessInput(
-                    outPoint = utxo.toOutPoint(),
-                    txOut = utxo.toTxOut(),
-                    taprootInternalKey = internalKey,
-                    taprootDerivationPaths = mapOf(internalKey to derivation.forTaproot())
-                )
-            }
+            ScriptType.P2WPKH, ScriptType.P2SH_P2WPKH -> updateWitnessInputTx(
+                inputTx = requireNotNull(parent),
+                outputIndex = utxo.outputIndex,
+                redeemScript = fields.redeemScript,
+                derivationPaths = fields.derivationPaths
+            )
+            ScriptType.P2TR -> updateWitnessInput(
+                outPoint = utxo.toOutPoint(),
+                txOut = utxo.toTxOut(),
+                taprootInternalKey = fields.taprootInternalKey,
+                taprootDerivationPaths = fields.taprootDerivationPaths
+            )
             ScriptType.P2SH, ScriptType.P2WSH -> error("${key.scriptType} input in a single-key wallet")
         }.orThrow()
     }
@@ -172,50 +181,47 @@ internal class PsbtCreator(
         key: WalletPublicKey,
         keyOrigin: Descriptor.KeyOrigin
     ): Psbt {
-        val derivation = keyOrigin.derivationOf(key)
+        val fields = SignerFields(key, keyOrigin)
         return when (key.scriptType) {
-            ScriptType.P2WPKH -> updateWitnessOutput(
-                outputIndex = outputIndex,
-                derivationPaths = mapOf(key.publicKey to derivation)
-            )
-            ScriptType.P2SH_P2WPKH -> updateWitnessOutput(
-                outputIndex = outputIndex,
-                redeemScript = Script.pay2wpkh(key.publicKey),
-                derivationPaths = mapOf(key.publicKey to derivation)
-            )
             ScriptType.P2PKH -> updateNonWitnessOutput(
                 outputIndex = outputIndex,
-                derivationPaths = mapOf(key.publicKey to derivation)
+                derivationPaths = fields.derivationPaths
             )
-            ScriptType.P2TR -> {
-                val internalKey = XonlyPublicKey(key.publicKey)
-                updateWitnessOutput(
-                    outputIndex = outputIndex,
-                    taprootInternalKey = internalKey,
-                    taprootDerivationPaths = mapOf(internalKey to derivation.forTaproot())
-                )
-            }
-            ScriptType.P2SH, ScriptType.P2WSH -> error("${key.scriptType} change in a single-key wallet")
+            else -> updateWitnessOutput(
+                outputIndex = outputIndex,
+                redeemScript = fields.redeemScript,
+                derivationPaths = fields.derivationPaths,
+                taprootInternalKey = fields.taprootInternalKey,
+                taprootDerivationPaths = fields.taprootDerivationPaths
+            )
         }.orThrow()
     }
 }
 
 /**
- * The key's full path from the master: the origin path (which the account
- * extended public key sits at) followed by `/chain/index`.
+ * The PSBT fields through which a signer recognises [key] as its own, the same
+ * for an input and for change: a BIP-32 derivation, plus the redeem script for
+ * wrapped segwit, or the internal key and taproot derivation for taproot.
  */
-private fun Descriptor.KeyOrigin.derivationOf(key: WalletPublicKey): KeyPathWithMaster {
-    val accountPath = path.map { step ->
-        if (step.hardened) DeterministicWallet.hardened(step.index) else step.index
-    }
-    val chain = if (key.isExternal) 0L else 1L
-    val masterFingerprint = fingerprint.fold(0L) { acc, byte -> (acc shl 8) or (byte.toLong() and 0xff) }
-    return KeyPathWithMaster(masterFingerprint, KeyPath(accountPath + chain + key.index.toLong()))
+private class SignerFields(key: WalletPublicKey, keyOrigin: Descriptor.KeyOrigin) {
+    private val derivation = KeyPathWithMaster(
+        keyOrigin.fingerprint.fold(0L) { acc, byte -> (acc shl 8) or (byte.toLong() and 0xff) },
+        // The origin path leads to the account key; `/chain/index` leads on to this key.
+        KeyPath(keyOrigin.path.map { it.childNumber() } + (if (key.isExternal) 0L else 1L) + key.index.toLong())
+    )
+    private val isTaproot = key.scriptType == ScriptType.P2TR
+
+    val derivationPaths = if (isTaproot) emptyMap() else mapOf(key.publicKey to derivation)
+    val redeemScript = if (key.scriptType == ScriptType.P2SH_P2WPKH) Script.pay2wpkh(key.publicKey) else null
+    val taprootInternalKey = if (isTaproot) XonlyPublicKey(key.publicKey) else null
+    // A key-path-only taproot key has no script leaves.
+    val taprootDerivationPaths = taprootInternalKey
+        ?.let { mapOf(it to TaprootBip32DerivationPath(emptyList(), derivation.masterKeyFingerprint, derivation.keyPath)) }
+        .orEmpty()
 }
 
-/** A key-path-only taproot key has no script leaves. */
-private fun KeyPathWithMaster.forTaproot(): TaprootBip32DerivationPath =
-    TaprootBip32DerivationPath(leaves = emptyList(), masterKeyFingerprint = masterKeyFingerprint, keyPath = keyPath)
+private fun Descriptor.PathStep.childNumber(): Long =
+    if (hardened) DeterministicWallet.hardened(index) else index
 
 // ACINQ refuses an update only when the PSBT doesn't match the data given,
 // which the code above never produces.
