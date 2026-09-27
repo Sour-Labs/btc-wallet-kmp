@@ -300,6 +300,18 @@ class SyncManager(
     }
 
     /**
+     * Fetch a transaction's raw hex from the active explorer. Like
+     * [broadcastTransaction], it needs a running sync: before [start], after a
+     * [SyncMode.OneShot] sync and after [stop] there is no client.
+     * @throws IllegalStateException when there is no client
+     */
+    suspend fun getRawTransaction(txId: String): String {
+        val currentApi = api
+            ?: throw IllegalStateException("No explorer client: the kit is not running a Continuous or IncrementalOnly sync")
+        return currentApi.getRawTransaction(txId)
+    }
+
+    /**
      * Get current block height.
      */
     suspend fun getCurrentBlockHeight(): Int? {

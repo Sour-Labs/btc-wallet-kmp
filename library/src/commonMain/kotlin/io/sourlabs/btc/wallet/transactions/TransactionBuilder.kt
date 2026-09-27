@@ -79,7 +79,12 @@ data class UnsignedTransaction(
     /**
      * Total fee in satoshis.
      */
-    val fee: Long
+    val fee: Long,
+
+    /**
+     * Key that controls the change output (null if no change).
+     */
+    val changeKey: WalletPublicKey? = null
 )
 
 /**
@@ -174,7 +179,8 @@ class TransactionBuilder(
             publicKeys = inputKeys,
             hasChange = selectionResult.hasChange,
             changeOutputIndex = changeOutputIndex,
-            fee = selectionResult.fee
+            fee = selectionResult.fee,
+            changeKey = changeKey.takeIf { changeOutputIndex != null }
         )
     }
 
