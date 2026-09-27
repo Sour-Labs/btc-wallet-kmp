@@ -1,5 +1,6 @@
 package io.sourlabs.btc.wallet.transactions
 
+import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.ScriptFlags
 import fr.acinq.bitcoin.Transaction
 import io.sourlabs.btc.wallet.api.InvalidAddressException
@@ -293,6 +294,41 @@ class TransactionCreator(
                 amount = netAmount,
                 fee = unsignedTx.fee,
             )
+        )
+    }
+
+    /**
+     * Record a transaction signed outside the wallet once it is broadcast, the
+     * way the create* paths record theirs: spent UTXOs removed, input and change
+     * keys marked used, a PENDING entry saved. The change key is the internal
+     * key an output pays to.
+     */
+    internal suspend fun recordExternallySigned(signedTx: Transaction, fee: Long) {
+        // Recorded after the broadcast, so a poll may already have seen it in the
+        // mempool and removed its UTXOs: that record stands, and one built now
+        // would miss the spent amounts.
+        if (transactionStorage.exists(signedTx.txid.toString())) return
+        val utxos = signedTx.txIn.mapNotNull { unspentOutputStorage.getUtxo("${it.outPoint.txid}:${it.outPoint.index}") }
+        val inputKeys = utxos.map { utxo ->
+            publicKeyManager.findByPath(utxo.publicKeyPath)
+                ?: throw IllegalStateException("Public key not found for UTXO: ${utxo.id}")
+        }
+        val changeKeysByScript = publicKeyManager.getInternalPublicKeys()
+            .associateBy { ByteVector(addressConverter.createScriptPubKey(it)) }
+        val changeOutputIndex = signedTx.txOut.indexOfFirst { it.publicKeyScript in changeKeysByScript }.takeIf { it >= 0 }
+        val changeKey = changeOutputIndex?.let { changeKeysByScript.getValue(signedTx.txOut[it].publicKeyScript) }
+        recordOutgoingTransaction(
+            // The recorder reads only the spent UTXOs, their keys, the change key and the fee.
+            UnsignedTransaction(
+                transaction = signedTx,
+                utxos = utxos,
+                publicKeys = inputKeys,
+                hasChange = changeKey != null,
+                changeOutputIndex = changeOutputIndex,
+                fee = fee,
+                changeKey = changeKey
+            ),
+            signedTx
         )
     }
 
