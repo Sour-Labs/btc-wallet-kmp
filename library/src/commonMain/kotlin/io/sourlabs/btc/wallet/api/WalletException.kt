@@ -71,7 +71,8 @@ class SigningException(
 ) : WalletException(message, cause)
 
 /**
- * Exception thrown when the wallet cannot build a PSBT for an external signer.
+ * Exception thrown when the wallet cannot build a PSBT for an external signer,
+ * or refuses what the signer returned.
  * Insufficient funds still raise [io.sourlabs.btc.wallet.transactions.InsufficientFundsException].
  */
 sealed class PsbtException(
@@ -118,6 +119,37 @@ sealed class PsbtException(
     class ParentTransactionMismatch(
         val txId: String
     ) : PsbtException("Parent transaction $txId does not match the wallet's records")
+
+    /**
+     * The draft or signed transaction was made by a kit for another wallet;
+     * finalizing or recording it here would touch this wallet's keys.
+     */
+    class OtherWallet : PsbtException("Made by a kit for another wallet")
+
+    /** What the signer returned is neither a PSBT nor a transaction. */
+    class UnrecognizedSignedData(
+        cause: Throwable? = null
+    ) : PsbtException("Signed data is neither a PSBT nor a transaction", cause)
+
+    /**
+     * What the signer returned is not the transaction in the unsigned PSBT:
+     * its [part] differs.
+     */
+    class SignedTransactionMismatch(
+        val part: Part
+    ) : PsbtException("Signed transaction differs from the one the wallet built: ${part.name.lowercase()}") {
+        /** The part of the transaction that differs, checked in this order. */
+        enum class Part { VERSION, LOCK_TIME, INPUTS, OUTPUTS }
+    }
+
+    /**
+     * An input's signature is missing, doesn't verify, or signs less than the
+     * whole transaction (any sighash other than ALL, or DEFAULT for taproot).
+     */
+    class SignatureInvalid(
+        message: String,
+        cause: Throwable? = null
+    ) : PsbtException(message, cause)
 }
 
 /**

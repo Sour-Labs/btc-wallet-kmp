@@ -24,8 +24,14 @@ import kotlin.io.encoding.Base64
 
 /**
  * An unsigned PSBT, ready for the hardware wallet that holds the wallet's keys.
+ *
+ * Keep it to pass to [io.sourlabs.btc.wallet.api.BitcoinKit.finalizeSigned]
+ * with what the signer returns: it carries the UTXOs, keys and change key the
+ * wallet chose, which the signed result is checked against. Only
+ * [io.sourlabs.btc.wallet.api.BitcoinKit.buildPsbt] creates one; it can't be
+ * rebuilt from [base64].
  */
-data class PsbtDraft(
+class PsbtDraft internal constructor(
     /**
      * The PSBT (BIP-174, version 0), base64-encoded.
      */
@@ -40,7 +46,13 @@ data class PsbtDraft(
     /**
      * Fee paid.
      */
-    val fee: Long
+    val fee: Long,
+
+    internal val psbt: Psbt,
+    internal val spentUtxos: List<UnspentOutput>,
+    internal val inputKeys: List<WalletPublicKey>,
+    internal val changeKey: WalletPublicKey?,
+    internal val walletConfig: WalletConfig
 )
 
 /**
@@ -103,7 +115,12 @@ internal class PsbtCreator(
         return PsbtDraft(
             base64 = Base64.encode(Psbt.write(psbt).toByteArray()),
             amount = sendAmount,
-            fee = unsignedTx.fee
+            fee = unsignedTx.fee,
+            psbt = psbt,
+            spentUtxos = unsignedTx.utxos,
+            inputKeys = unsignedTx.publicKeys,
+            changeKey = unsignedTx.changeKey,
+            walletConfig = walletConfig
         )
     }
 

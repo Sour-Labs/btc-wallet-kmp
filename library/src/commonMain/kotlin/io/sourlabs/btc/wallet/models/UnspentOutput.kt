@@ -64,7 +64,7 @@ data class UnspentOutput(
      * Unique identifier for this UTXO: txid:vout
      */
     val id: String
-        get() = "${transactionHash.toHex()}:$outputIndex"
+        get() = idOf(toOutPoint())
 
     /**
      * Convert to bitcoin-kmp OutPoint.
@@ -75,6 +75,13 @@ data class UnspentOutput(
      * Convert to bitcoin-kmp TxOut.
      */
     fun toTxOut(): TxOut = TxOut(Satoshi(value), ByteVector(scriptPubKey))
+
+    companion object {
+        /**
+         * The [id] of the UTXO at [outPoint]: txid:vout.
+         */
+        internal fun idOf(outPoint: OutPoint): String = "${outPoint.txid.value.toHex()}:${outPoint.index}"
+    }
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true

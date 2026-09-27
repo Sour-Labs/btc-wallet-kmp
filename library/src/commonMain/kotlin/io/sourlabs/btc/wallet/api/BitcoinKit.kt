@@ -21,7 +21,9 @@ import io.sourlabs.btc.wallet.sync.WalletScanResult
 import io.sourlabs.btc.wallet.transactions.CreatedTransaction
 import io.sourlabs.btc.wallet.transactions.PsbtCreator
 import io.sourlabs.btc.wallet.transactions.PsbtDraft
+import io.sourlabs.btc.wallet.transactions.PsbtFinalizer
 import io.sourlabs.btc.wallet.transactions.SendInfo
+import io.sourlabs.btc.wallet.transactions.SignedTransaction
 import io.sourlabs.btc.wallet.transactions.TransactionCreator
 import io.sourlabs.btc.wallet.utxo.SelectionStrategy
 import io.sourlabs.btc.wallet.utxo.UnspentOutputProvider
@@ -45,6 +47,7 @@ class BitcoinKit private constructor(
     private val utxoProvider: UnspentOutputProvider,
     private val transactionCreator: TransactionCreator,
     private val psbtCreator: PsbtCreator,
+    private val psbtFinalizer: PsbtFinalizer,
     private val syncManager: SyncManager,
     private val storage: WalletStorage,
     private val scope: CoroutineScope
@@ -280,6 +283,46 @@ class BitcoinKit private constructor(
     }
 
     /**
+     * Check what the hardware wallet returned against the [draft] from
+     * [buildPsbt], and turn it into the final transaction. [signed] is a PSBT
+     * (finalized or not) or a raw signed transaction.
+     *
+     * Refuses anything that isn't exactly the transaction in [draft]: other
+     * inputs, outputs, version or lock time, a missing or invalid signature,
+     * or a signature over less than the whole transaction. Amounts, scripts
+     * and keys come from [draft], never from [signed].
+     *
+     * @param signed the signer's result as bytes, binary or text (a BBQr payload or a file)
+     * @throws PsbtException.OtherWallet if [draft] was built by a kit for another wallet
+     * @throws PsbtException.UnrecognizedSignedData if [signed] is neither a PSBT nor a transaction
+     * @throws PsbtException.SignedTransactionMismatch if it isn't the transaction that was built
+     * @throws PsbtException.SignatureInvalid if a signature is missing, invalid or not SIGHASH_ALL
+     */
+    fun finalizeSigned(draft: PsbtDraft, signed: ByteArray): SignedTransaction {
+        return psbtFinalizer.finalize(draft, signed)
+    }
+
+    /**
+     * [finalizeSigned] for text: a PSBT in base64 or hex, or a raw transaction in hex.
+     */
+    fun finalizeSigned(draft: PsbtDraft, signed: String): SignedTransaction {
+        return psbtFinalizer.finalize(draft, signed)
+    }
+
+    /**
+     * Broadcast a transaction from [finalizeSigned] and, once the explorer
+     * accepts it, record the spend as [send] does: spent UTXOs removed, keys
+     * marked used, a pending entry in [transactions]. Like
+     * [broadcastTransaction], it needs a running sync.
+     *
+     * @return the transaction ID if successful
+     * @throws PsbtException.OtherWallet if [signed] was finalized by a kit for another wallet
+     */
+    suspend fun broadcastSigned(signed: SignedTransaction): Result<String> {
+        return psbtFinalizer.broadcast(signed)
+    }
+
+    /**
      * Create, sign, and broadcast a transaction.
      * @return the transaction ID if successful
      */
@@ -486,6 +529,11 @@ class BitcoinKit private constructor(
                 transactionStorage = storage.transactionStorage,
                 fetchRawTransaction = syncManager::getRawTransaction
             )
+            val psbtFinalizer = PsbtFinalizer(
+                walletConfig = walletConfig,
+                transactionCreator = transactionCreator,
+                broadcastRawTransaction = syncManager::broadcastTransaction
+            )
 
             return BitcoinKit(
                 hdWalletManager = hdWalletManager,
@@ -494,6 +542,7 @@ class BitcoinKit private constructor(
                 utxoProvider = utxoProvider,
                 transactionCreator = transactionCreator,
                 psbtCreator = psbtCreator,
+                psbtFinalizer = psbtFinalizer,
                 syncManager = syncManager,
                 storage = storage,
                 scope = scope

@@ -229,27 +229,43 @@ class TransactionCreator(
      * PENDING entry — that would corrupt local state until the next full sync.
      */
     private fun verifyConsensusValidity(unsignedTx: UnsignedTransaction, signedTx: Transaction) {
-        val prevOuts = unsignedTx.utxos.associate { it.toOutPoint() to it.toTxOut() }
         try {
-            signedTx.correctlySpends(prevOuts, ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+            signedTx.verifySpends(unsignedTx.utxos)
         } catch (e: Exception) {
             throw SigningException("Produced transaction failed consensus validation", e)
         }
     }
 
     /**
+     * Record a spend a `create*` path just signed; see [recordSpend].
+     */
+    private suspend fun recordOutgoingTransaction(unsignedTx: UnsignedTransaction, signedTx: Transaction) =
+        recordSpend(unsignedTx.utxos, unsignedTx.publicKeys, unsignedTx.changeKey, unsignedTx.fee, signedTx)
+
+    /**
+     * Record a transaction signed outside the wallet once it is broadcast,
+     * with the UTXOs, keys and change key its draft was built from.
+     */
+    internal suspend fun recordExternallySigned(signed: SignedTransaction) {
+        // Recorded after the broadcast, so a poll may already have recorded it
+        // from the mempool, or even confirmed: that record stands.
+        if (transactionStorage.exists(signed.txId)) return
+        val draft = signed.draft
+        recordSpend(draft.spentUtxos, draft.inputKeys, draft.changeKey, signed.fee, signed.transaction)
+    }
+
+    /**
      * Reserve the spent UTXOs locally, mark input/change keys as used, and persist a
-     * `PENDING` [WalletTransaction] so the wallet immediately reflects the just-built
-     * transaction. Called from each `create*` path after a successful sign, so a
-     * subsequent `create*` call in the same process doesn't re-select the same UTXOs
-     * or reuse the same change address.
+     * `PENDING` [WalletTransaction] so the wallet immediately reflects the transaction.
+     * Called from each `create*` path after a successful sign, so a subsequent
+     * `create*` call in the same process doesn't re-select the same UTXOs or reuse
+     * the same change address.
      *
-     * The change key is [UnsignedTransaction.changeKey], the exact key the builder
-     * allocated for this tx's change output (null for a sweep or a no-change build).
-     * Don't re-derive it from the unused-key pool here: marking input keys used
-     * between build time and now could shift "lowest unused internal key" away from
-     * the one the builder picked, and the cost of getting that wrong is silently
-     * marking the wrong key used.
+     * [changeKey] must be the exact key the builder allocated for this tx's change
+     * output (null for a sweep or a no-change build). Don't re-derive it from the
+     * unused-key pool here: marking input keys used between build time and now
+     * could shift "lowest unused internal key" away from the one the builder picked,
+     * and the cost of getting that wrong is silently marking the wrong key used.
      *
      * If the caller never actually broadcasts the resulting transaction, the next
      * full sync will reconcile by re-adding the unspent outputs and the `PENDING`
@@ -257,17 +273,20 @@ class TransactionCreator(
      * for keeping `createTransaction()` side-effecting; see PR-02 of the OSS readiness
      * audit for the rationale.
      */
-    private suspend fun recordOutgoingTransaction(
-        unsignedTx: UnsignedTransaction,
+    private suspend fun recordSpend(
+        utxos: List<UnspentOutput>,
+        inputKeys: List<WalletPublicKey>,
+        changeKey: WalletPublicKey?,
+        fee: Long,
         signedTx: Transaction,
     ) {
-        for (key in unsignedTx.publicKeys.distinctBy { it.path }) {
+        for (key in inputKeys.distinctBy { it.path }) {
             publicKeyManager.markAsUsed(key.path)
         }
-        unsignedTx.changeKey?.let { publicKeyManager.markAsUsed(it.path) }
-        unspentOutputStorage.deleteUtxos(unsignedTx.utxos.map { it.id })
+        changeKey?.let { publicKeyManager.markAsUsed(it.path) }
+        unspentOutputStorage.deleteUtxos(utxos.map { it.id })
 
-        val inputAmount = unsignedTx.utxos.sumOf { it.value }
+        val inputAmount = utxos.sumOf { it.value }
         // Sum every output paying to one of our scriptPubKeys, not just the change
         // output: covers the self-send / consolidation case where the destination
         // address is also one of ours. Without this, a self-send's persisted
@@ -291,7 +310,7 @@ class TransactionCreator(
                 status = TransactionStatus.PENDING,
                 type = TransactionType.OUTGOING,
                 amount = netAmount,
-                fee = unsignedTx.fee,
+                fee = fee,
             )
         )
     }
@@ -358,10 +377,7 @@ class TransactionCreator(
         validatePostSubtractionAmount(selection, destinationScriptType, subtractFeeFromAmount)
 
         // Get public keys for inputs
-        val inputKeys = selection.selectedUtxos.map { utxo ->
-            publicKeyManager.findByPath(utxo.publicKeyPath)
-                ?: throw IllegalStateException("Public key not found for UTXO: ${utxo.id}")
-        }
+        val inputKeys = publicKeyManager.keysFor(selection.selectedUtxos)
 
         // Get change key if needed
         val changeKey = if (selection.hasChange) {
@@ -426,10 +442,7 @@ class TransactionCreator(
         validatePostSubtractionAmount(selection, destinationScriptType, subtractFeeFromAmount)
 
         // Get public keys for inputs
-        val inputKeys = utxos.map { utxo ->
-            publicKeyManager.findByPath(utxo.publicKeyPath)
-                ?: throw IllegalStateException("Public key not found for UTXO: ${utxo.id}")
-        }
+        val inputKeys = publicKeyManager.keysFor(utxos)
 
         // Get change key if needed
         val changeKey = if (selection.hasChange) {
@@ -491,10 +504,7 @@ class TransactionCreator(
         }
 
         // Get public keys for inputs
-        val inputKeys = utxos.map { utxo ->
-            publicKeyManager.findByPath(utxo.publicKeyPath)
-                ?: throw IllegalStateException("Public key not found for UTXO: ${utxo.id}")
-        }
+        val inputKeys = publicKeyManager.keysFor(utxos)
 
         // Build sweep transaction
         val unsignedTx = builder.buildSweep(utxos, toAddress, feeRate, inputKeys, rbfEnabled)
@@ -541,10 +551,7 @@ class TransactionCreator(
         validatePostSubtractionAmount(selection, destinationScriptType, subtractFeeFromAmount)
 
         // Get public keys for inputs
-        val inputKeys = selection.selectedUtxos.map { utxo ->
-            publicKeyManager.findByPath(utxo.publicKeyPath)
-                ?: throw IllegalStateException("Public key not found for UTXO: ${utxo.id}")
-        }
+        val inputKeys = publicKeyManager.keysFor(selection.selectedUtxos)
 
         // Get change key if needed
         val changeKey = if (selection.hasChange) {
@@ -565,6 +572,15 @@ class TransactionCreator(
         return builder.build(selection, params, changeKey, inputKeys)
     }
 }
+
+/**
+ * Bitcoin's script check of [this] spending [utxos], with the standard script
+ * flags: the one consensus check for transactions the wallet signs and for
+ * those a hardware wallet signs.
+ * @throws Exception from the script interpreter when an input doesn't verify
+ */
+internal fun Transaction.verifySpends(utxos: List<UnspentOutput>) =
+    correctlySpends(utxos.associate { it.toOutPoint() to it.toTxOut() }, ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
 
 /**
  * Exception thrown when there are insufficient funds for a transaction.
