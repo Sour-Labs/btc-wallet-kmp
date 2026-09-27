@@ -4,7 +4,6 @@ import co.touchlab.kermit.Logger
 import fr.acinq.bitcoin.ByteVector
 import fr.acinq.bitcoin.OP_PUSHDATA
 import fr.acinq.bitcoin.Script
-import fr.acinq.bitcoin.ScriptFlags
 import fr.acinq.bitcoin.ScriptWitness
 import fr.acinq.bitcoin.SigHash
 import fr.acinq.bitcoin.Transaction
@@ -12,12 +11,11 @@ import fr.acinq.bitcoin.TxIn
 import fr.acinq.bitcoin.psbt.Input
 import fr.acinq.bitcoin.psbt.Psbt
 import io.sourlabs.btc.wallet.api.PsbtException
-import io.sourlabs.btc.wallet.keys.AddressConverter
-import io.sourlabs.btc.wallet.keys.PublicKeyManager
+import io.sourlabs.btc.wallet.api.PsbtException.SignedTransactionMismatch.Part
+import io.sourlabs.btc.wallet.core.WalletConfig
 import io.sourlabs.btc.wallet.models.ScriptType
 import io.sourlabs.btc.wallet.models.UnspentOutput
 import io.sourlabs.btc.wallet.models.WalletPublicKey
-import io.sourlabs.btc.wallet.storage.UnspentOutputStorage
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlin.io.encoding.Base64
@@ -25,8 +23,8 @@ import kotlin.io.encoding.Base64
 private val log = Logger.withTag("PsbtFinalizer")
 
 /**
- * A transaction signed outside the wallet and checked against the PSBT the
- * wallet built. Only [io.sourlabs.btc.wallet.api.BitcoinKit.finalizeSigned]
+ * A transaction signed outside the wallet and checked against the [PsbtDraft]
+ * the wallet built. Only [io.sourlabs.btc.wallet.api.BitcoinKit.finalizeSigned]
  * creates one, so only a checked transaction reaches
  * [io.sourlabs.btc.wallet.api.BitcoinKit.broadcastSigned].
  */
@@ -37,13 +35,11 @@ class SignedTransaction internal constructor(
     val transaction: Transaction,
 
     /**
-     * Fee paid, from the wallet's records of the spent UTXOs.
+     * Fee paid, from the amounts of the UTXOs the draft spends.
      */
     val fee: Long,
 
-    internal val spentUtxos: List<UnspentOutput>,
-    internal val inputKeys: List<WalletPublicKey>,
-    internal val changeKey: WalletPublicKey?
+    internal val draft: PsbtDraft
 ) {
     /**
      * Transaction ID.
@@ -54,69 +50,36 @@ class SignedTransaction internal constructor(
 
 /**
  * Turns what a hardware wallet returns into a transaction to broadcast, but
- * only if it is exactly the transaction in the unsigned PSBT the wallet built.
+ * only if it is exactly the transaction in the [PsbtDraft] the wallet built.
  * Signers return a PSBT, finalized or not, or a raw signed transaction.
  *
- * The unsigned PSBT comes back from the caller, so it is checked too: each of
- * its inputs must be a stored UTXO of this wallet. Amounts, scripts and keys
- * come from those records, never from the PSBTs.
+ * Amounts, scripts and keys come from the draft, which only
+ * [PsbtCreator] makes, never from what the signer returned.
  */
 internal class PsbtFinalizer(
-    private val unspentOutputStorage: UnspentOutputStorage,
-    private val publicKeyManager: PublicKeyManager,
-    private val addressConverter: AddressConverter,
+    private val walletConfig: WalletConfig,
     private val transactionCreator: TransactionCreator,
     private val broadcastRawTransaction: suspend (rawTxHex: String) -> Result<String>
 ) {
     /**
-     * @param unsignedPsbtBase64 the PSBT the wallet built ([PsbtDraft.base64])
      * @param signed what the signer returned: a PSBT or a raw transaction, as
      *   binary or as text (base64 or hex), e.g. a BBQr payload or a file
      */
-    suspend fun finalize(unsignedPsbtBase64: String, signed: ByteArray): SignedTransaction {
-        val unsigned = decodeText(unsignedPsbtBase64)?.let { Psbt.read(it).right }
-            ?: throw PsbtException.UnknownUnsignedPsbt("The unsigned PSBT does not read as a PSBT")
-        val template = unsigned.global.tx
-        val spentUtxos = template.txIn.mapIndexed { index, txIn ->
-            val input = unsigned.inputs[index]
-            val claimed = input.witnessUtxo ?: input.nonWitnessUtxo?.txOut?.getOrNull(txIn.outPoint.index.toInt())
-            unspentOutputStorage.getUtxo(UnspentOutput.idOf(txIn.outPoint))?.takeIf { it.toTxOut() == claimed }
-                ?: throw PsbtException.UnknownUnsignedPsbt("Input $index is not a UTXO of this wallet")
-        }
-        val inputKeys = publicKeyManager.keysFor(spentUtxos)
-
-        val bytes = signed.asBinary()
-        val candidate = if (bytes.isPsbt()) {
-            val signedPsbt = readPsbt(bytes)
-            template.requireSameAs(signedPsbt.global.tx)
-            template.copy(txIn = template.txIn.mapIndexed { index, txIn ->
-                txIn.finalizedFrom(signedPsbt.inputs[index], inputKeys[index], index)
-            })
-        } else {
-            readTransaction(bytes).also { template.requireSameAs(it) }
-        }
-        verifySignatures(candidate, spentUtxos, inputKeys)
-
-        return SignedTransaction(
-            transaction = candidate,
-            fee = spentUtxos.sumOf { it.value } - candidate.txOut.sumOf { it.amount.sat },
-            spentUtxos = spentUtxos,
-            inputKeys = inputKeys,
-            changeKey = changeKeyOf(unsigned)
-        )
-    }
+    fun finalize(draft: PsbtDraft, signed: ByteArray): SignedTransaction =
+        finalizeBinary(draft, signed.asBinary())
 
     /**
      * [finalize] for text: a PSBT in base64 or hex, or a raw transaction in hex.
      */
-    suspend fun finalize(unsignedPsbtBase64: String, signed: String): SignedTransaction =
-        finalize(unsignedPsbtBase64, signed.encodeToByteArray())
+    fun finalize(draft: PsbtDraft, signed: String): SignedTransaction =
+        finalizeBinary(draft, decodeText(signed) ?: throw PsbtException.UnrecognizedSignedData())
 
     /**
      * Broadcast [signed] and, once the explorer accepts it, record the spend as
      * a signed send does, so balance and history update at once.
      */
     suspend fun broadcast(signed: SignedTransaction): Result<String> {
+        if (signed.draft.walletConfig != walletConfig) throw PsbtException.OtherWallet()
         val result = broadcastRawTransaction(ByteVector(Transaction.write(signed.transaction)).toHex())
         if (result.isSuccess) {
             // The explorer has it now: a failed or cancelled record must not turn
@@ -130,6 +93,26 @@ internal class PsbtFinalizer(
             }
         }
         return result
+    }
+
+    private fun finalizeBinary(draft: PsbtDraft, bytes: ByteArray): SignedTransaction {
+        if (draft.walletConfig != walletConfig) throw PsbtException.OtherWallet()
+        val template = draft.psbt.global.tx
+        val candidate = if (bytes.isPsbt()) {
+            val signedPsbt = readPsbt(bytes)
+            template.requireSameAs(signedPsbt.global.tx)
+            template.copy(txIn = template.txIn.mapIndexed { index, txIn ->
+                txIn.finalizedFrom(signedPsbt.inputs[index], draft.inputKeys[index], index)
+            })
+        } else {
+            readTransaction(bytes).also { template.requireSameAs(it) }
+        }
+        verifySignatures(candidate, draft.spentUtxos, draft.inputKeys)
+        return SignedTransaction(
+            transaction = candidate,
+            fee = draft.spentUtxos.sumOf { it.value } - candidate.txOut.sumOf { it.amount.sat },
+            draft = draft
+        )
     }
 
     /**
@@ -157,16 +140,14 @@ internal class PsbtFinalizer(
             ScriptType.P2PKH -> copy(
                 signatureScript = ByteVector(Script.write(listOf(OP_PUSHDATA(signature), OP_PUSHDATA(key.publicKey.value))))
             )
+            // A draft only comes from PsbtCreator, which refuses multisig wallets.
             ScriptType.P2TR, ScriptType.P2SH, ScriptType.P2WSH -> error("${key.scriptType} input in a single-key wallet")
         }
     }
 
     private fun verifySignatures(tx: Transaction, spentUtxos: List<UnspentOutput>, inputKeys: List<WalletPublicKey>) {
         try {
-            tx.correctlySpends(
-                spentUtxos.associate { it.toOutPoint() to it.toTxOut() },
-                ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS
-            )
+            tx.verifySpends(spentUtxos)
         } catch (e: Exception) {
             throw PsbtException.SignatureInvalid("Signed transaction fails script verification", e)
         }
@@ -187,20 +168,6 @@ internal class PsbtFinalizer(
             }
             if (!signsAll) throw PsbtException.SignatureInvalid("Input $index is not signed with SIGHASH_ALL")
         }
-    }
-
-    /**
-     * The key of the change output: the output the PSBT marks with a derivation
-     * ([PsbtCreator] marks only change) that pays to one of the wallet's
-     * internal keys. A payment to the wallet's own address carries no mark.
-     */
-    private suspend fun changeKeyOf(unsigned: Psbt): WalletPublicKey? {
-        val markedScripts = unsigned.outputs.indices
-            .filter { unsigned.outputs[it].derivationPaths.isNotEmpty() || unsigned.outputs[it].taprootDerivationPaths.isNotEmpty() }
-            .map { unsigned.global.tx.txOut[it].publicKeyScript }
-        if (markedScripts.isEmpty()) return null
-        return publicKeyManager.getInternalPublicKeys()
-            .firstOrNull { ByteVector(addressConverter.createScriptPubKey(it)) in markedScripts }
     }
 
     private fun missingSignature(index: Int) = PsbtException.SignatureInvalid("Input $index has no signature")
@@ -248,9 +215,13 @@ private val PSBT_MAGIC = byteArrayOf(0x70, 0x73, 0x62, 0x74, 0xff.toByte())
 private fun ByteArray.isPsbt(): Boolean =
     size >= PSBT_MAGIC.size && copyOfRange(0, PSBT_MAGIC.size).contentEquals(PSBT_MAGIC)
 
-// A binary transaction starts with its version (0x01 or 0x02), which isn't printable.
-private fun ByteArray.isText(): Boolean =
-    isNotEmpty() && all { it in 0x20..0x7e || it == '\t'.code.toByte() || it == '\n'.code.toByte() || it == '\r'.code.toByte() }
+// A binary transaction starts with its version (0x01 or 0x02), which isn't
+// printable; a text file is valid UTF-8 whose characters are text.
+private fun ByteArray.isText(): Boolean {
+    if (isEmpty() || any { it in 0x00..0x08 || it in 0x0e..0x1f }) return false
+    val text = decodeToString()
+    return '�' !in text
+}
 
 /**
  * Throws unless [other] is the same transaction apart from signatures: same
@@ -258,12 +229,12 @@ private fun ByteArray.isText(): Boolean =
  * version and lock time.
  */
 private fun Transaction.requireSameAs(other: Transaction) {
-    val difference = when {
-        version != other.version -> "version"
-        lockTime != other.lockTime -> "lock time"
-        txIn.map { it.outPoint to it.sequence } != other.txIn.map { it.outPoint to it.sequence } -> "inputs"
-        txOut != other.txOut -> "outputs"
+    val differing = when {
+        version != other.version -> Part.VERSION
+        lockTime != other.lockTime -> Part.LOCK_TIME
+        txIn.map { it.outPoint to it.sequence } != other.txIn.map { it.outPoint to it.sequence } -> Part.INPUTS
+        txOut != other.txOut -> Part.OUTPUTS
         else -> return
     }
-    throw PsbtException.SignedTransactionMismatch(difference)
+    throw PsbtException.SignedTransactionMismatch(differing)
 }

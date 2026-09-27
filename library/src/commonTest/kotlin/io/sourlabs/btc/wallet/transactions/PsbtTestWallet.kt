@@ -69,15 +69,13 @@ internal class PsbtTestWallet private constructor(
     val fetchedTxIds: MutableList<String>,
     /** Raw transactions (hex) sent to the fake explorer. */
     val broadcasts: MutableList<String>,
-    finalizerFor: (PsbtTestWallet) -> PsbtFinalizer,
+    val finalizer: PsbtFinalizer,
 ) {
     /** When set, the fake explorer rejects broadcasts with it. */
     var broadcastFailure: Exception? = null
 
     /** When set, saving a transaction record fails with it. */
     var recordFailure: Exception? = null
-
-    val finalizer: PsbtFinalizer = finalizerFor(this)
 
     /**
      * Pay each of [payments] from one new parent transaction and save the
@@ -152,15 +150,14 @@ internal class PsbtTestWallet private constructor(
                 fetchedTxIds += txId
                 ByteVector(Transaction.write(parents.getValue(txId))).toHex()
             }
-            wallet = PsbtTestWallet(
-                storage, publicKeyManager, converter, creator, parents, fetchedTxIds, mutableListOf(),
-            ) { w ->
-                PsbtFinalizer(storage.unspentOutputStorage, publicKeyManager, converter, transactionCreator) { rawTxHex ->
-                    w.broadcasts += rawTxHex
-                    w.broadcastFailure?.let { Result.failure(it) }
-                        ?: Result.success(Transaction.read(rawTxHex).txid.toString())
-                }
+            val finalizer = PsbtFinalizer(config, transactionCreator) { rawTxHex ->
+                wallet.broadcasts += rawTxHex
+                wallet.broadcastFailure?.let { Result.failure(it) }
+                    ?: Result.success(Transaction.read(rawTxHex).txid.toString())
             }
+            wallet = PsbtTestWallet(
+                storage, publicKeyManager, converter, creator, parents, fetchedTxIds, mutableListOf(), finalizer,
+            )
             return wallet
         }
     }

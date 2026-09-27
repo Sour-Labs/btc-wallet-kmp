@@ -80,7 +80,7 @@ data class UnspentOutput(
         /**
          * The [id] of the UTXO at [outPoint]: txid:vout.
          */
-        fun idOf(outPoint: OutPoint): String = "${outPoint.txid.value.toHex()}:${outPoint.index}"
+        internal fun idOf(outPoint: OutPoint): String = "${outPoint.txid.value.toHex()}:${outPoint.index}"
     }
 
     override fun equals(other: Any?): Boolean {

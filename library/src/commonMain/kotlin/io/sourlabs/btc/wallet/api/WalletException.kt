@@ -121,13 +121,10 @@ sealed class PsbtException(
     ) : PsbtException("Parent transaction $txId does not match the wallet's records")
 
     /**
-     * The unsigned PSBT passed back isn't one this wallet built: it doesn't
-     * read as a PSBT, or an input isn't one of the wallet's stored UTXOs with
-     * the same amount and script.
+     * The draft or signed transaction was made by a kit for another wallet;
+     * finalizing or recording it here would touch this wallet's keys.
      */
-    class UnknownUnsignedPsbt(
-        message: String
-    ) : PsbtException(message)
+    class OtherWallet : PsbtException("Made by a kit for another wallet")
 
     /** What the signer returned is neither a PSBT nor a transaction. */
     class UnrecognizedSignedData(
@@ -136,11 +133,14 @@ sealed class PsbtException(
 
     /**
      * What the signer returned is not the transaction in the unsigned PSBT:
-     * its inputs, outputs, version or lock time differ, as [reason] says.
+     * its [part] differs.
      */
     class SignedTransactionMismatch(
-        val reason: String
-    ) : PsbtException("Signed transaction differs from the one the wallet built: $reason")
+        val part: Part
+    ) : PsbtException("Signed transaction differs from the one the wallet built: ${part.name.lowercase()}") {
+        /** The part of the transaction that differs, checked in this order. */
+        enum class Part { VERSION, LOCK_TIME, INPUTS, OUTPUTS }
+    }
 
     /**
      * An input's signature is missing, doesn't verify, or signs less than the

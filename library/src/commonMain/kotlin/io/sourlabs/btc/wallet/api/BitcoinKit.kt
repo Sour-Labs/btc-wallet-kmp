@@ -283,32 +283,30 @@ class BitcoinKit private constructor(
     }
 
     /**
-     * Check what the hardware wallet returned against the unsigned PSBT from
+     * Check what the hardware wallet returned against the [draft] from
      * [buildPsbt], and turn it into the final transaction. [signed] is a PSBT
      * (finalized or not) or a raw signed transaction.
      *
-     * Refuses anything that isn't exactly the transaction in [unsignedPsbt]:
-     * other inputs, outputs, version or lock time, a missing or invalid
-     * signature, or a signature over less than the whole transaction.
-     * [unsignedPsbt] is checked too: each input must be one of this wallet's
-     * stored UTXOs. Amounts, scripts and keys come from those records.
+     * Refuses anything that isn't exactly the transaction in [draft]: other
+     * inputs, outputs, version or lock time, a missing or invalid signature,
+     * or a signature over less than the whole transaction. Amounts, scripts
+     * and keys come from [draft], never from [signed].
      *
-     * @param unsignedPsbt the [PsbtDraft.base64] the caller kept
      * @param signed the signer's result as bytes, binary or text (a BBQr payload or a file)
-     * @throws PsbtException.UnknownUnsignedPsbt if [unsignedPsbt] isn't one this wallet built
+     * @throws PsbtException.OtherWallet if [draft] was built by a kit for another wallet
      * @throws PsbtException.UnrecognizedSignedData if [signed] is neither a PSBT nor a transaction
      * @throws PsbtException.SignedTransactionMismatch if it isn't the transaction that was built
      * @throws PsbtException.SignatureInvalid if a signature is missing, invalid or not SIGHASH_ALL
      */
-    suspend fun finalizeSigned(unsignedPsbt: String, signed: ByteArray): SignedTransaction {
-        return psbtFinalizer.finalize(unsignedPsbt, signed)
+    fun finalizeSigned(draft: PsbtDraft, signed: ByteArray): SignedTransaction {
+        return psbtFinalizer.finalize(draft, signed)
     }
 
     /**
      * [finalizeSigned] for text: a PSBT in base64 or hex, or a raw transaction in hex.
      */
-    suspend fun finalizeSigned(unsignedPsbt: String, signed: String): SignedTransaction {
-        return psbtFinalizer.finalize(unsignedPsbt, signed)
+    fun finalizeSigned(draft: PsbtDraft, signed: String): SignedTransaction {
+        return psbtFinalizer.finalize(draft, signed)
     }
 
     /**
@@ -318,6 +316,7 @@ class BitcoinKit private constructor(
      * [broadcastTransaction], it needs a running sync.
      *
      * @return the transaction ID if successful
+     * @throws PsbtException.OtherWallet if [signed] was finalized by a kit for another wallet
      */
     suspend fun broadcastSigned(signed: SignedTransaction): Result<String> {
         return psbtFinalizer.broadcast(signed)
@@ -531,9 +530,7 @@ class BitcoinKit private constructor(
                 fetchRawTransaction = syncManager::getRawTransaction
             )
             val psbtFinalizer = PsbtFinalizer(
-                unspentOutputStorage = storage.unspentOutputStorage,
-                publicKeyManager = publicKeyManager,
-                addressConverter = addressConverter,
+                walletConfig = walletConfig,
                 transactionCreator = transactionCreator,
                 broadcastRawTransaction = syncManager::broadcastTransaction
             )

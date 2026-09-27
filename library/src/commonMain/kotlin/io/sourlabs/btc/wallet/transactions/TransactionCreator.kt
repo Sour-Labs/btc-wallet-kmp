@@ -229,9 +229,8 @@ class TransactionCreator(
      * PENDING entry — that would corrupt local state until the next full sync.
      */
     private fun verifyConsensusValidity(unsignedTx: UnsignedTransaction, signedTx: Transaction) {
-        val prevOuts = unsignedTx.utxos.associate { it.toOutPoint() to it.toTxOut() }
         try {
-            signedTx.correctlySpends(prevOuts, ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
+            signedTx.verifySpends(unsignedTx.utxos)
         } catch (e: Exception) {
             throw SigningException("Produced transaction failed consensus validation", e)
         }
@@ -244,15 +243,15 @@ class TransactionCreator(
         recordSpend(unsignedTx.utxos, unsignedTx.publicKeys, unsignedTx.changeKey, unsignedTx.fee, signedTx)
 
     /**
-     * Record a transaction signed outside the wallet once it is broadcast. Its
-     * spent UTXOs, their keys and the change key were checked against the
-     * wallet's records when it was finalized.
+     * Record a transaction signed outside the wallet once it is broadcast,
+     * with the UTXOs, keys and change key its draft was built from.
      */
     internal suspend fun recordExternallySigned(signed: SignedTransaction) {
         // Recorded after the broadcast, so a poll may already have recorded it
         // from the mempool, or even confirmed: that record stands.
         if (transactionStorage.exists(signed.txId)) return
-        recordSpend(signed.spentUtxos, signed.inputKeys, signed.changeKey, signed.fee, signed.transaction)
+        val draft = signed.draft
+        recordSpend(draft.spentUtxos, draft.inputKeys, draft.changeKey, signed.fee, signed.transaction)
     }
 
     /**
@@ -573,6 +572,15 @@ class TransactionCreator(
         return builder.build(selection, params, changeKey, inputKeys)
     }
 }
+
+/**
+ * Bitcoin's script check of [this] spending [utxos], with the standard script
+ * flags: the one consensus check for transactions the wallet signs and for
+ * those a hardware wallet signs.
+ * @throws Exception from the script interpreter when an input doesn't verify
+ */
+internal fun Transaction.verifySpends(utxos: List<UnspentOutput>) =
+    correctlySpends(utxos.associate { it.toOutPoint() to it.toTxOut() }, ScriptFlags.STANDARD_SCRIPT_VERIFY_FLAGS)
 
 /**
  * Exception thrown when there are insufficient funds for a transaction.

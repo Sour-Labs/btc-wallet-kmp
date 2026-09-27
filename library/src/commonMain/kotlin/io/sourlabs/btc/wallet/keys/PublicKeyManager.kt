@@ -97,7 +97,7 @@ class PublicKeyManager(
      * The keys that control [utxos], in the same order.
      * @throws IllegalStateException if a UTXO's key isn't stored
      */
-    suspend fun keysFor(utxos: List<UnspentOutput>): List<WalletPublicKey> = utxos.map { utxo ->
+    internal suspend fun keysFor(utxos: List<UnspentOutput>): List<WalletPublicKey> = utxos.map { utxo ->
         storage.findByPath(utxo.publicKeyPath)
             ?: throw IllegalStateException("Public key not found for UTXO: ${utxo.id}")
     }
