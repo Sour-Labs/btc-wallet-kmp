@@ -10,6 +10,60 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 _No changes yet._
 
+## [0.7.0] - 2026-09-27
+
+### Added
+
+- Hardware-wallet signing through PSBTs (BIP-174, version 0) for single-key
+  watch-only wallets built from a descriptor with a `[fingerprint/path]` key
+  origin:
+  - `BitcoinKit.buildPsbt(toAddress, amount, feeRate, subtractFeeFromAmount)`
+    returns a `PsbtDraft`: the unsigned PSBT in base64, the amount and the fee.
+    Coins are selected as for a signed send, with RBF. Every input and the
+    change output carry a BIP-32 derivation, segwit v0 and legacy inputs carry
+    their parent transaction (from local storage, else the explorer), and
+    taproot inputs carry their internal key. Building changes no wallet state.
+  - `BitcoinKit.finalizeSigned(draft, signed)` takes what the signer returns
+    (a PSBT, finalized or not, or a raw transaction; binary, base64 or hex) and
+    returns a `SignedTransaction` only if it is exactly the drafted
+    transaction, every script verifies against the draft's UTXOs, and every
+    signature is SIGHASH_ALL (DEFAULT for taproot).
+  - `BitcoinKit.broadcastSigned(signed)` broadcasts it and, once the explorer
+    accepts it, records the spend as a signed send does.
+  - `PsbtException`, with `MissingKeyOrigin`, `KeyOriginMismatch`,
+    `MultisigNotSupported`, `ParentTransactionUnavailable`,
+    `ParentTransactionMismatch`, `OtherWallet`, `UnrecognizedSignedData`,
+    `SignedTransactionMismatch` and `SignatureInvalid`.
+  - `SyncManager.getRawTransaction(txId)` and `UnsignedTransaction.changeKey`.
+- `BitcoinKit.sendInfo` takes `subtractFeeFromAmount`, so its quote matches
+  what `createTransaction` builds.
+
+### Changed
+
+- Every transaction the wallet signs is checked with the script interpreter
+  (`Transaction.correctlySpends`, standard flags) against the outputs it spends
+  before it is recorded. A failure throws `SigningException` and leaves the
+  wallet's UTXOs, keys and history untouched.
+- A subtract-fee send whose destination amount, after the fee, is below the
+  dust threshold now fails with `InvalidAmountException` instead of building a
+  transaction the network rejects.
+
+### Fixed
+
+- Taproot (BIP-86) spends were signed with a doubly tweaked key, so the network
+  rejected every one with "invalid Schnorr signature".
+- Subtract-fee sends without change paid about twice the intended fee, and an
+  amount at or below the fee signed a negative output whose failed send still
+  deleted its UTXOs. Now destination + change + fee equals the inputs, and the
+  reported fee equals the fee on chain.
+- Sending the exact balance with subtract-fee failed with
+  `InsufficientFundsException`.
+
+### Security
+
+- A test now fails CI if key generation stops using the platform's CSPRNG
+  (`SecureRandom`, `SecRandomCopyBytes`, `/dev/urandom`).
+
 ## [0.6.1] - 2026-06-09
 
 ### Added
@@ -187,7 +241,8 @@ Central upload.
   in distributed client binaries — anyone with the APK/IPA can extract it.
   Production setups should proxy through a backend.
 
-[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.0...v0.5.1
