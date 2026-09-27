@@ -120,6 +120,15 @@ sealed class PsbtException(
         val txId: String
     ) : PsbtException("Parent transaction $txId does not match the wallet's records")
 
+    /**
+     * The unsigned PSBT passed back isn't one this wallet built: it doesn't
+     * read as a PSBT, or an input isn't one of the wallet's stored UTXOs with
+     * the same amount and script.
+     */
+    class UnknownUnsignedPsbt(
+        message: String
+    ) : PsbtException(message)
+
     /** What the signer returned is neither a PSBT nor a transaction. */
     class UnrecognizedSignedData(
         cause: Throwable? = null
@@ -127,9 +136,11 @@ sealed class PsbtException(
 
     /**
      * What the signer returned is not the transaction in the unsigned PSBT:
-     * its inputs, outputs, version or lock time differ.
+     * its inputs, outputs, version or lock time differ, as [reason] says.
      */
-    class SignedTransactionMismatch : PsbtException("Signed transaction differs from the one the wallet built")
+    class SignedTransactionMismatch(
+        val reason: String
+    ) : PsbtException("Signed transaction differs from the one the wallet built: $reason")
 
     /**
      * An input's signature is missing, doesn't verify, or signs less than the

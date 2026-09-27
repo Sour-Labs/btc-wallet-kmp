@@ -1,5 +1,6 @@
 package io.sourlabs.btc.wallet.keys
 
+import io.sourlabs.btc.wallet.models.UnspentOutput
 import io.sourlabs.btc.wallet.models.WalletPublicKey
 import io.sourlabs.btc.wallet.storage.PublicKeyStorage
 
@@ -90,6 +91,15 @@ class PublicKeyManager(
      */
     suspend fun findByPath(path: String): WalletPublicKey? {
         return storage.findByPath(path)
+    }
+
+    /**
+     * The keys that control [utxos], in the same order.
+     * @throws IllegalStateException if a UTXO's key isn't stored
+     */
+    suspend fun keysFor(utxos: List<UnspentOutput>): List<WalletPublicKey> = utxos.map { utxo ->
+        storage.findByPath(utxo.publicKeyPath)
+            ?: throw IllegalStateException("Public key not found for UTXO: ${utxo.id}")
     }
 
     /**

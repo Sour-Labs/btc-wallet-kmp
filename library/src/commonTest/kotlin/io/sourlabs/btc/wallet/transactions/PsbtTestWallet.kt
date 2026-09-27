@@ -31,6 +31,7 @@ import io.sourlabs.btc.wallet.models.UnspentOutput
 import io.sourlabs.btc.wallet.models.WalletPublicKey
 import io.sourlabs.btc.wallet.models.WalletTransaction
 import io.sourlabs.btc.wallet.storage.InMemoryWalletStorage
+import io.sourlabs.btc.wallet.storage.TransactionStorage
 import io.sourlabs.btc.wallet.utxo.UnspentOutputProvider
 import kotlin.io.encoding.Base64
 import kotlin.test.assertEquals
@@ -72,6 +73,9 @@ internal class PsbtTestWallet private constructor(
 ) {
     /** When set, the fake explorer rejects broadcasts with it. */
     var broadcastFailure: Exception? = null
+
+    /** When set, saving a transaction record fails with it. */
+    var recordFailure: Exception? = null
 
     val finalizer: PsbtFinalizer = finalizerFor(this)
 
@@ -123,6 +127,13 @@ internal class PsbtTestWallet private constructor(
             storage.blockInfoStorage.saveBlockInfo(BlockInfo(height = 110, hash = "h", timestamp = 0))
             val publicKeyManager = PublicKeyManager(HdWalletKeySource(hd), storage.publicKeyStorage, gapLimit = 20)
             publicKeyManager.initialize()
+            lateinit var wallet: PsbtTestWallet
+            val records = object : TransactionStorage by storage.transactionStorage {
+                override suspend fun saveTransaction(transaction: WalletTransaction) {
+                    wallet.recordFailure?.let { throw it }
+                    storage.transactionStorage.saveTransaction(transaction)
+                }
+            }
             val transactionCreator = TransactionCreator(
                 hdWalletManager = hd,
                 publicKeyManager = publicKeyManager,
@@ -132,7 +143,7 @@ internal class PsbtTestWallet private constructor(
                     confirmationsThreshold = 1,
                 ),
                 addressConverter = converter,
-                transactionStorage = storage.transactionStorage,
+                transactionStorage = records,
                 unspentOutputStorage = storage.unspentOutputStorage,
             )
             val parents = mutableMapOf<String, Transaction>()
@@ -141,15 +152,16 @@ internal class PsbtTestWallet private constructor(
                 fetchedTxIds += txId
                 ByteVector(Transaction.write(parents.getValue(txId))).toHex()
             }
-            return PsbtTestWallet(
+            wallet = PsbtTestWallet(
                 storage, publicKeyManager, converter, creator, parents, fetchedTxIds, mutableListOf(),
-            ) { wallet ->
-                PsbtFinalizer(transactionCreator) { rawTxHex ->
-                    wallet.broadcasts += rawTxHex
-                    wallet.broadcastFailure?.let { Result.failure(it) }
+            ) { w ->
+                PsbtFinalizer(storage.unspentOutputStorage, publicKeyManager, converter, transactionCreator) { rawTxHex ->
+                    w.broadcasts += rawTxHex
+                    w.broadcastFailure?.let { Result.failure(it) }
                         ?: Result.success(Transaction.read(rawTxHex).txid.toString())
                 }
             }
+            return wallet
         }
     }
 }
@@ -169,29 +181,40 @@ internal fun decode(draft: PsbtDraft): Psbt =
 /**
  * Sign every input the way a hardware wallet does: find the key through the
  * input's derivation field (checking the master fingerprint), derive it from
- * [TEST_MASTER], sign. Inputs stay unfinalized, as some signers return them.
+ * [TEST_MASTER], sign, under [sighashType] when given. Inputs stay
+ * unfinalized, as some signers return them.
  */
-internal fun Psbt.signAll(): Psbt {
+internal fun Psbt.signAll(sighashType: Int? = null): Psbt {
     var signed = this
     inputs.forEachIndexed { index, input ->
+        val outPoint = global.tx.txIn[index].outPoint
         val internalKey = input.taprootInternalKey
         signed = if (internalKey != null) {
             val derivation = input.taprootDerivationPaths.getValue(internalKey)
-            signed.signInput(index, privateKeyFor(KeyPathWithMaster(derivation.masterKeyFingerprint, derivation.keyPath)))
+            val privateKey = privateKeyFor(KeyPathWithMaster(derivation.masterKeyFingerprint, derivation.keyPath))
+            val withSighash = if (sighashType == null) signed else {
+                signed.updateWitnessInput(outPoint, (input as Input.WitnessInput).txOut, sighashType = sighashType).right!!
+            }
+            withSighash.signInput(index, privateKey)
         } else {
             val (publicKey, derivation) = input.derivationPaths.entries.single()
             val privateKey = privateKeyFor(derivation)
             assertEquals(publicKey, privateKey.publicKey())
-            if (input is Input.WitnessInput) {
+            when (input) {
                 // ACINQ signs with the PSBT's witness script as the BIP-143 script
                 // code, but a P2WPKH input has none (BIP-174): a signer uses P2PKH.
-                signed.updateWitnessInput(
-                    outPoint = global.tx.txIn[index].outPoint,
+                is Input.WitnessInput -> signed.updateWitnessInput(
+                    outPoint = outPoint,
                     txOut = input.txOut,
                     witnessScript = Script.pay2pkh(publicKey),
+                    sighashType = sighashType,
                 ).right!!.signInput(index, privateKey)
-            } else {
-                signed.signInput(index, privateKey)
+                is Input.NonWitnessInput -> signed.updateNonWitnessInput(
+                    inputTx = input.inputTx,
+                    outputIndex = input.outputIndex,
+                    sighashType = sighashType,
+                ).right!!.signInput(index, privateKey)
+                else -> fail("input $index is not ready to sign")
             }
         }
     }

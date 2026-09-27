@@ -15,7 +15,6 @@ import io.sourlabs.btc.wallet.core.WalletConfig
 import io.sourlabs.btc.wallet.descriptors.DescriptorChecksum
 import io.sourlabs.btc.wallet.keys.HDWalletManager
 import io.sourlabs.btc.wallet.models.Purpose
-import io.sourlabs.btc.wallet.models.WalletTransaction
 import kotlinx.coroutines.test.runTest
 import kotlin.io.encoding.Base64
 import kotlin.test.Test

@@ -289,23 +289,25 @@ class BitcoinKit private constructor(
      *
      * Refuses anything that isn't exactly the transaction in [unsignedPsbt]:
      * other inputs, outputs, version or lock time, a missing or invalid
-     * signature, or a signature over less than the whole transaction. Amounts
-     * and scripts are read from [unsignedPsbt], never from [signed].
+     * signature, or a signature over less than the whole transaction.
+     * [unsignedPsbt] is checked too: each input must be one of this wallet's
+     * stored UTXOs. Amounts, scripts and keys come from those records.
      *
      * @param unsignedPsbt the [PsbtDraft.base64] the caller kept
-     * @param signed the signer's result as bytes (a BBQr payload or a file)
+     * @param signed the signer's result as bytes, binary or text (a BBQr payload or a file)
+     * @throws PsbtException.UnknownUnsignedPsbt if [unsignedPsbt] isn't one this wallet built
      * @throws PsbtException.UnrecognizedSignedData if [signed] is neither a PSBT nor a transaction
      * @throws PsbtException.SignedTransactionMismatch if it isn't the transaction that was built
      * @throws PsbtException.SignatureInvalid if a signature is missing, invalid or not SIGHASH_ALL
      */
-    fun finalizeSigned(unsignedPsbt: String, signed: ByteArray): SignedTransaction {
+    suspend fun finalizeSigned(unsignedPsbt: String, signed: ByteArray): SignedTransaction {
         return psbtFinalizer.finalize(unsignedPsbt, signed)
     }
 
     /**
      * [finalizeSigned] for text: a PSBT in base64 or hex, or a raw transaction in hex.
      */
-    fun finalizeSigned(unsignedPsbt: String, signed: String): SignedTransaction {
+    suspend fun finalizeSigned(unsignedPsbt: String, signed: String): SignedTransaction {
         return psbtFinalizer.finalize(unsignedPsbt, signed)
     }
 
@@ -529,6 +531,9 @@ class BitcoinKit private constructor(
                 fetchRawTransaction = syncManager::getRawTransaction
             )
             val psbtFinalizer = PsbtFinalizer(
+                unspentOutputStorage = storage.unspentOutputStorage,
+                publicKeyManager = publicKeyManager,
+                addressConverter = addressConverter,
                 transactionCreator = transactionCreator,
                 broadcastRawTransaction = syncManager::broadcastTransaction
             )

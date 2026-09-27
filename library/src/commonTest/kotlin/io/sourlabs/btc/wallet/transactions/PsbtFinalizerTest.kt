@@ -20,6 +20,7 @@ import io.sourlabs.btc.wallet.api.PsbtException
 import io.sourlabs.btc.wallet.models.Purpose
 import io.sourlabs.btc.wallet.models.TransactionStatus
 import io.sourlabs.btc.wallet.models.TransactionType
+import io.sourlabs.btc.wallet.models.UnspentOutput
 import kotlinx.coroutines.test.runTest
 import kotlin.io.encoding.Base64
 import kotlin.test.Test
@@ -52,10 +53,6 @@ class PsbtFinalizerTest {
 
     private fun signedRaw(draft: PsbtDraft): Transaction = decode(draft).signAll().finalizeAll().extract().right!!
 
-    /** The key the unsigned PSBT names for input [index]. */
-    private fun keyFor(draft: PsbtDraft, index: Int): PrivateKey =
-        DeterministicWallet.derivePrivateKey(TEST_MASTER, decode(draft).inputs[index].derivationPaths.values.single().keyPath).privateKey
-
     /** [tx] with input [index] re-signed (P2WPKH) by [key] under [sighashType]. */
     private fun resigned(tx: Transaction, draft: PsbtDraft, index: Int, key: PrivateKey, sighashType: Int): Transaction {
         val publicKey = PublicKey(tx.txIn[index].witness.stack[1])
@@ -71,7 +68,7 @@ class PsbtFinalizerTest {
     private fun Psbt.withTx(tx: Transaction): Psbt = copy(global = global.copy(tx = tx))
 
     /** Refused with [T]; nothing reaches the explorer. */
-    private inline fun <reified T : PsbtException> PsbtTestWallet.assertRefused(draft: PsbtDraft, signed: ByteArray) {
+    private suspend inline fun <reified T : PsbtException> PsbtTestWallet.assertRefused(draft: PsbtDraft, signed: ByteArray) {
         assertFailsWith<T> { finalizer.finalize(draft.base64, signed) }
         assertTrue(broadcasts.isEmpty())
     }
@@ -91,20 +88,58 @@ class PsbtFinalizerTest {
     }
 
     @Test
-    fun finalizedPsbtAndRawTransactionGiveTheSameTransaction() = runTest {
+    fun finalizedPsbtAndRawTransactionGiveTheSameTransactionForEveryScriptType() = runTest {
+        for (purpose in Purpose.entries) {
+            val (wallet, draft) = builtPsbt(purpose)
+            val finalized = decode(draft).signAll().finalizeAll()
+            val raw = finalized.extract().right!!
+            val base64 = Base64.encode(finalized.bytes())
+
+            val results = listOf(
+                wallet.finalizer.finalize(draft.base64, finalized.bytes()),
+                wallet.finalizer.finalize(draft.base64, base64),
+                wallet.finalizer.finalize(draft.base64, base64.encodeToByteArray()),
+                wallet.finalizer.finalize(draft.base64, base64.trimEnd('=').replace('+', '-').replace('/', '_')),
+                wallet.finalizer.finalize(draft.base64, ByteVector(finalized.bytes()).toHex()),
+                wallet.finalizer.finalize(draft.base64, Transaction.write(raw)),
+                wallet.finalizer.finalize(draft.base64, "  ${raw.hex()}\n"),
+                wallet.finalizer.finalize(draft.base64, "${raw.hex()}\n".encodeToByteArray()),
+            )
+
+            results.forEach { assertEquals(raw, it.transaction, "$purpose") }
+        }
+    }
+
+    @Test
+    fun unsignedPsbtIsReadAsTextToo() = runTest {
         val (wallet, draft) = builtPsbt()
-        val finalized = decode(draft).signAll().finalizeAll()
-        val raw = finalized.extract().right!!
+        val signed = decode(draft).signAll().bytes()
 
-        val results = listOf(
-            wallet.finalizer.finalize(draft.base64, finalized.bytes()),
-            wallet.finalizer.finalize(draft.base64, Base64.encode(finalized.bytes())),
-            wallet.finalizer.finalize(draft.base64, ByteVector(finalized.bytes()).toHex()),
-            wallet.finalizer.finalize(draft.base64, Transaction.write(raw)),
-            wallet.finalizer.finalize(draft.base64, "  ${raw.hex()}\n"),
-        )
+        assertEquals(draft.fee, wallet.finalizer.finalize("${draft.base64}\n", signed).fee)
+        assertFailsWith<PsbtException.UnknownUnsignedPsbt> { wallet.finalizer.finalize("not a psbt", signed) }
+    }
 
-        results.forEach { assertEquals(raw, it.transaction) }
+    @Test
+    fun unsignedPsbtThatSpendsOutputsTheWalletDoesNotHoldIsRefused() = runTest {
+        val (wallet, draft) = builtPsbt()
+        val unsigned = decode(draft)
+        val signed = unsigned.signAll().bytes()
+        // A template claiming 1 BTC more for input 0 (without its parent, which
+        // ACINQ would check the amount against).
+        val inflated = unsigned.copy(inputs = unsigned.inputs.mapIndexed { i, input ->
+            if (i == 0 && input is Input.WitnessInput.PartiallySignedWitnessInput) {
+                input.copy(txOut = input.txOut.copy(amount = input.txOut.amount + Satoshi(100_000_000)), nonWitnessUtxo = null)
+            } else {
+                input
+            }
+        })
+
+        assertFailsWith<PsbtException.UnknownUnsignedPsbt> {
+            wallet.finalizer.finalize(Base64.encode(inflated.bytes()), signed)
+        }
+        // A UTXO the wallet no longer holds.
+        wallet.storage.unspentOutputStorage.deleteUtxo(UnspentOutput.idOf(unsigned.global.tx.txIn[1].outPoint))
+        assertFailsWith<PsbtException.UnknownUnsignedPsbt> { wallet.finalizer.finalize(draft.base64, signed) }
     }
 
     @Test
@@ -164,6 +199,33 @@ class PsbtFinalizerTest {
     }
 
     @Test
+    fun recordFailureAfterBroadcastStillReportsTheBroadcast() = runTest {
+        val (wallet, draft) = builtPsbt()
+        val signed = wallet.finalizer.finalize(draft.base64, decode(draft).signAll().bytes())
+        wallet.recordFailure = IllegalStateException("disk full")
+
+        assertEquals(signed.txId, wallet.finalizer.broadcast(signed).getOrThrow())
+        assertEquals(1, wallet.broadcasts.size)
+    }
+
+    @Test
+    fun paymentToTheWalletsOwnChangeAddressKeepsTheRealChangeKey() = runTest {
+        val wallet = PsbtTestWallet.create(descriptorConfig(Purpose.BIP84))
+        wallet.fund(wallet.externalKey(0) to 100_000)
+        // Change goes to internal key 1; the payment to internal key 0, which
+        // comes first both among the outputs and among the wallet's keys.
+        val paidKey = wallet.firstChangeKey()
+        wallet.publicKeyManager.markAsUsed(paidKey.path)
+        val changeKey = wallet.publicKeyManager.getInternalPublicKeys().single { it.index == 1 }
+        val draft = wallet.creator.build(wallet.converter.toAddress(paidKey), 30_000, 2, false)
+        val signed = wallet.finalizer.finalize(draft.base64, decode(draft).signAll().bytes())
+
+        wallet.finalizer.broadcast(signed).getOrThrow()
+
+        assertTrue(wallet.publicKeyManager.findByPath(changeKey.path)!!.isUsed, "real change key used")
+    }
+
+    @Test
     fun failedBroadcastRecordsNothing() = runTest {
         val (wallet, draft) = builtPsbt()
         val signed = wallet.finalizer.finalize(draft.base64, decode(draft).signAll().bytes())
@@ -184,7 +246,10 @@ class PsbtFinalizerTest {
         val redirected = tx.copy(txOut = tx.txOut.mapIndexed { i, out -> if (i == 0) out.copy(publicKeyScript = attackerScript) else out })
         val raised = tx.copy(txOut = tx.txOut.mapIndexed { i, out -> if (i == 0) out.copy(amount = out.amount + Satoshi(1_000)) else out })
 
-        wallet.assertRefused<PsbtException.SignedTransactionMismatch>(draft, signed.withTx(redirected).bytes())
+        val e = assertFailsWith<PsbtException.SignedTransactionMismatch> {
+            wallet.finalizer.finalize(draft.base64, signed.withTx(redirected).bytes())
+        }
+        assertEquals("outputs", e.reason)
         wallet.assertRefused<PsbtException.SignedTransactionMismatch>(draft, signed.withTx(raised).bytes())
     }
 
@@ -224,13 +289,18 @@ class PsbtFinalizerTest {
     }
 
     @Test
-    fun signatureThatLeavesOutputsOutIsRefused() = runTest {
-        val (wallet, draft) = builtPsbt()
+    fun signatureOverLessThanTheWholeTransactionIsRefusedForEveryScriptType() = runTest {
+        // Valid signatures that leave the outputs, or the other inputs, open to change.
+        val weakSighashes = listOf(SigHash.SIGHASH_NONE, SigHash.SIGHASH_ALL or SigHash.SIGHASH_ANYONECANPAY)
+        for (purpose in Purpose.entries) {
+            for (sighashType in weakSighashes) {
+                val (wallet, draft) = builtPsbt(purpose)
+                val weak = decode(draft).signAll(sighashType).finalizeAll()
 
-        // A valid signature, but SIGHASH_NONE lets anyone relaying it change the outputs.
-        val weak = resigned(signedRaw(draft), draft, index = 0, key = keyFor(draft, 0), sighashType = SigHash.SIGHASH_NONE)
-
-        wallet.assertRefused<PsbtException.SignatureInvalid>(draft, Transaction.write(weak))
+                wallet.assertRefused<PsbtException.SignatureInvalid>(draft, weak.bytes())
+                wallet.assertRefused<PsbtException.SignatureInvalid>(draft, Transaction.write(weak.extract().right!!))
+            }
+        }
     }
 
     @Test
