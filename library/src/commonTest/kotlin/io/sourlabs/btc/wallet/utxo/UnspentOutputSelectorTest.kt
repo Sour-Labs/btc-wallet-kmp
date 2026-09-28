@@ -13,10 +13,7 @@ import kotlin.test.assertTrue
 class UnspentOutputSelectorTest {
 
     // P2WPKH wallet — matches the test UTXO scriptType below for "all defaults" tests.
-    private val selector = UnspentOutputSelector(
-        walletScriptType = ScriptType.P2WPKH,
-        dustThreshold = 546,
-    )
+    private val selector = UnspentOutputSelector(walletScriptType = ScriptType.P2WPKH)
 
     // Default destination: another P2WPKH (bc1q…) address — keeps the fee numbers
     // matching the legacy "everything is P2WPKH" assumption tests were written against.
@@ -109,7 +106,7 @@ class UnspentOutputSelectorTest {
         // Use a UTXO with just enough funds that change would be dust
         // Input: 100,000 sats, sending 99,200 sats at 5 sat/vB
         // Estimated fee for 1 input, 1 output ~550 sats
-        // Change would be ~250 sats which is below dust (546)
+        // Change would be ~90 sats which is below P2WPKH dust (294)
         val utxos = listOf(
             createUtxo(100_000)
         )
@@ -202,9 +199,9 @@ class UnspentOutputSelectorTest {
         val utxos = listOf(createUtxo(100_000))
         val feeRate = 10L
 
-        // Residual 100_000 − 99_700 = 300 ≤ dust (546) → no change output.
+        // Residual 100_000 − 99_710 = 290 < P2WPKH dust (294) → no change output.
         val result = selector.select(
-            utxos, 99_700, feeRate, p2wpkhDestination,
+            utxos, 99_710, feeRate, p2wpkhDestination,
             subtractFeeFromAmount = true,
         )
 
@@ -213,8 +210,8 @@ class UnspentOutputSelectorTest {
             listOf(ScriptType.P2WPKH), listOf(ScriptType.P2WPKH), feeRate,
         )
         assertEquals(0L, result.change)
-        assertEquals(feeWithoutChange + 300, result.fee, "fee absorbs the residual")
-        assertEquals(99_700 - feeWithoutChange, result.sendAmount, "residual must not also come out of the destination")
+        assertEquals(feeWithoutChange + 290, result.fee, "fee absorbs the residual")
+        assertEquals(99_710 - feeWithoutChange, result.sendAmount, "residual must not also come out of the destination")
         assertEquals(result.totalInput, result.sendAmount + result.fee + result.change)
     }
 
@@ -290,5 +287,66 @@ class UnspentOutputSelectorTest {
         // 2 inputs needed (50k+50k > 80k+fee), output 31 + change 31 + header 10 + witness overhead.
         // Per-input vSize ≈ 68. So fee ≈ (2*68 + 31 + 31 + 10) * 10 ≈ 2080.
         assertTrue(result.fee in 1500..2500, "P2WPKH fee out of expected band: ${result.fee}")
+    }
+
+    // ─── Change dust limit follows the wallet's script type ───
+
+    /**
+     * Spends one coin of the wallet's own type with a target chosen so the
+     * change comes out at exactly [change] sats. `select` and `selectManual`
+     * must agree on the result.
+     */
+    private fun selectWithChange(
+        walletScriptType: ScriptType,
+        change: Long,
+        subtractFeeFromAmount: Boolean = false,
+        dustThreshold: Long? = null,
+    ): SelectionResult {
+        val selector = if (dustThreshold == null) {
+            UnspentOutputSelector(walletScriptType)
+        } else {
+            UnspentOutputSelector(walletScriptType, dustThreshold)
+        }
+        val totalInput = 100_000L
+        val feeRate = 1L
+        val feeWithChange = FeeCalculator.estimateFee(
+            listOf(walletScriptType), listOf(p2wpkhDestination, walletScriptType), feeRate,
+        )
+        val target = if (subtractFeeFromAmount) totalInput - change else totalInput - feeWithChange - change
+        val utxos = listOf(createUtxo(totalInput, scriptType = walletScriptType))
+        val result = selector.select(
+            utxos, target, feeRate, p2wpkhDestination,
+            subtractFeeFromAmount = subtractFeeFromAmount,
+        )
+        assertNotNull(result)
+        assertEquals(result.totalInput, result.sendAmount + result.fee + result.change)
+        assertEquals(result, selector.selectManual(utxos, target, feeRate, p2wpkhDestination, subtractFeeFromAmount))
+        return result
+    }
+
+    @Test
+    fun changeDustLimitFollowsWalletScriptType() {
+        val limits = mapOf(
+            ScriptType.P2WPKH to 294L,
+            ScriptType.P2TR to 330L,
+            ScriptType.P2SH_P2WPKH to 540L,
+            ScriptType.P2PKH to 546L,
+        )
+        for ((type, limit) in limits) {
+            assertEquals(limit, selectWithChange(type, limit).change, "$type must keep change at its dust limit")
+            assertEquals(0L, selectWithChange(type, limit - 1).change, "$type must drop change below its dust limit")
+        }
+    }
+
+    @Test
+    fun subtractFeeChangeDustLimitFollowsWalletScriptType() {
+        assertEquals(294L, selectWithChange(ScriptType.P2WPKH, 294, subtractFeeFromAmount = true).change)
+        assertEquals(0L, selectWithChange(ScriptType.P2WPKH, 293, subtractFeeFromAmount = true).change)
+    }
+
+    @Test
+    fun explicitDustThresholdOverridesTheScriptTypeDefault() {
+        assertEquals(546L, selectWithChange(ScriptType.P2WPKH, 546, dustThreshold = 546).change)
+        assertEquals(0L, selectWithChange(ScriptType.P2WPKH, 545, dustThreshold = 546).change)
     }
 }
