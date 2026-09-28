@@ -14,6 +14,7 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.sourlabs.btc.wallet.core.SyncConfig
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.ceil
 import kotlin.random.Random
 import kotlinx.coroutines.delay
 import kotlinx.serialization.SerialName
@@ -73,12 +74,16 @@ internal suspend fun <T> withRetry(
 open class BlockchainExplorerApi internal constructor(
     private val baseUrl: String,
     private val auth: SyncConfig.BlockStream.Auth?,
-    httpClient: HttpClient?
+    httpClient: HttpClient?,
+    // Blockstream runs Esplora, which serves /fee-estimates but not mempool.space's
+    // /v1/fees/recommended.
+    private val esploraFees: Boolean,
 ) {
-    constructor(baseUrl: String, httpClient: HttpClient? = null) : this(baseUrl, null, httpClient)
+    constructor(baseUrl: String, httpClient: HttpClient? = null) :
+        this(baseUrl, null, httpClient, esploraFees = false)
 
     constructor(config: SyncConfig.BlockStream, httpClient: HttpClient? = null) :
-        this(config.baseUrl, config.auth, httpClient)
+        this(config.baseUrl, config.auth, httpClient, esploraFees = true)
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -261,11 +266,21 @@ open class BlockchainExplorerApi internal constructor(
     }
 
     /**
-     * Get recommended fee rates.
+     * Get recommended fee rates. On Esplora (Blockstream) they come from `/fee-estimates`,
+     * mapped onto the same tiers by [esploraFeeEstimates].
      */
-    suspend fun getRecommendedFees(): FeeEstimates = withRetry {
-        log.d { "GET /v1/fees/recommended" }
-        client.get("$baseUrl/v1/fees/recommended").body()
+    suspend fun getRecommendedFees(): FeeEstimates {
+        if (!esploraFees) {
+            return withRetry {
+                log.d { "GET /v1/fees/recommended" }
+                client.get("$baseUrl/v1/fees/recommended").body()
+            }
+        }
+        val estimates: Map<String, Double> = withRetry {
+            log.d { "GET /fee-estimates" }
+            client.get("$baseUrl/fee-estimates").body()
+        }
+        return esploraFeeEstimates(estimates)
     }
 
     /**
@@ -402,6 +417,31 @@ data class FeeEstimates(
     val economyFee: Int,
     val minimumFee: Int
 )
+
+private const val MIN_RELAY_FEE_RATE = 1
+
+/**
+ * Maps Esplora's `/fee-estimates` (confirmation target in blocks to sat/vB) onto
+ * [FeeEstimates] the way mempool.space's tiers read: fastest = 1 block, half hour = 3,
+ * hour = 6, economy = 144. Rates are rounded up to whole sat/vB, never below the 1 sat/vB
+ * minimum relay fee, and a faster tier is never cheaper than a slower one. A target Esplora
+ * doesn't list takes the next faster one it does list, or the fastest listed if none is.
+ */
+internal fun esploraFeeEstimates(estimates: Map<String, Double>): FeeEstimates {
+    val byTarget = estimates.mapNotNull { (target, rate) -> target.toIntOrNull()?.let { it to rate } }.toMap()
+    require(byTarget.isNotEmpty()) { "Esplora returned no fee estimates" }
+
+    fun rate(target: Int): Int {
+        val listed = byTarget.keys.filter { it <= target }.maxOrNull() ?: byTarget.keys.min()
+        return ceil(byTarget.getValue(listed)).toInt().coerceAtLeast(MIN_RELAY_FEE_RATE)
+    }
+
+    val economy = rate(144)
+    val hour = maxOf(rate(6), economy)
+    val halfHour = maxOf(rate(3), hour)
+    val fastest = maxOf(rate(1), halfHour)
+    return FeeEstimates(fastest, halfHour, hour, economy, minimumFee = MIN_RELAY_FEE_RATE)
+}
 
 @Serializable
 data class MempoolInfo(

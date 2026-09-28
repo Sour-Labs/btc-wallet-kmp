@@ -8,7 +8,14 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 ## [Unreleased]
 
-_No changes yet._
+### Fixed
+
+- `BitcoinKit.getRecommendedFees()` on Blockstream (Esplora) backends. It asked for
+  mempool.space's `/v1/fees/recommended`, which Esplora doesn't serve (404), so it
+  always returned null. It now reads Esplora's `/fee-estimates` and maps the 1, 3, 6
+  and 144 block targets to `fastestFee`, `halfHourFee`, `hourFee` and `economyFee`,
+  rounded up to whole sat/vB, never below 1 sat/vB, and never cheaper for a faster
+  tier; `minimumFee` is 1. mempool.space and custom backends are unchanged.
 
 ## [0.7.0] - 2026-09-27
 
