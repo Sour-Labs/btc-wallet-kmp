@@ -281,10 +281,10 @@ class TransactionCreatorTest {
         val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
         f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
 
-        // Residual (100_000 − 99_700 = 300) is below dust (546) → no change output.
+        // Residual (100_000 − 99_710 = 290) is below P2WPKH dust (294) → no change output.
         val tx = f.creator.create(
             toAddress = externalDestination,
-            amount = 99_700,
+            amount = 99_710,
             feeRate = 10,
             subtractFeeFromAmount = true,
         )

@@ -21,6 +21,13 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
   adds nothing), never below 1 sat/vB, and, as on mempool.space, a faster tier is raised
   to any slower tier that quotes more. Esplora has no mempool minimum fee, so
   `minimumFee` is the 1 sat/vB relay floor.
+- Change below 546 sats is no longer given to the miner when the change output's
+  script type has a lower dust limit. `UnspentOutputSelector` now defaults its
+  `dustThreshold` to Bitcoin Core's limit for the wallet's script type (294 sats for
+  P2WPKH, 330 for P2TR, 540 for P2SH-P2WPKH, 546 for P2PKH), and keeps change equal
+  to the limit, as Core does. This applies to signed sends and to `buildPsbt`. For
+  example, a P2WPKH send of 600 sats from coins of 600 and 684 sats at 1 sat/vB now
+  pays a 210-sat fee and returns 474 sats of change, where it used to pay 684.
 
 ## [0.7.0] - 2026-09-27
 
