@@ -39,21 +39,12 @@ class EsploraFeeEstimatesTest {
     }
 
     @Test
-    fun aSlowerTierIsCappedAtTheFasterOne() {
-        // Every slower target quotes more than the faster one, so each tier is capped.
+    fun aFasterTierIsNeverCheaper() {
+        // Every slower target quotes more than the faster one, so each faster tier is raised,
+        // as mempool.space's fee-api does ("ensure recommendations always increase w/ priority").
         val estimates = mapOf("1" to 5.0, "3" to 6.0, "6" to 7.0, "144" to 8.0)
         assertEquals(
-            FeeEstimates(fastestFee = 5, halfHourFee = 5, hourFee = 5, economyFee = 5, minimumFee = 5),
-            esploraFeeEstimates(estimates),
-        )
-    }
-
-    @Test
-    fun theMinimumFollowsTheLowestQuote() {
-        // A full mempool: Core clamps every estimate to at least the purge rate.
-        val estimates = mapOf("1" to 20.0, "6" to 12.0, "144" to 6.2, "1008" to 6.0)
-        assertEquals(
-            FeeEstimates(fastestFee = 20, halfHourFee = 20, hourFee = 12, economyFee = 7, minimumFee = 6),
+            FeeEstimates(fastestFee = 8, halfHourFee = 8, hourFee = 8, economyFee = 8, minimumFee = 1),
             esploraFeeEstimates(estimates),
         )
     }
@@ -64,7 +55,7 @@ class EsploraFeeEstimatesTest {
         // 6 takes 5; 144 takes 25.
         val estimates = mapOf("2" to 8.0, "5" to 4.0, "25" to 2.0)
         assertEquals(
-            FeeEstimates(fastestFee = 8, halfHourFee = 8, hourFee = 4, economyFee = 2, minimumFee = 2),
+            FeeEstimates(fastestFee = 8, halfHourFee = 8, hourFee = 4, economyFee = 2, minimumFee = 1),
             esploraFeeEstimates(estimates),
         )
     }

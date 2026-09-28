@@ -13,6 +13,7 @@ import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.sourlabs.btc.wallet.core.SyncConfig
+import kotlin.concurrent.Volatile
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.roundToLong
 import kotlin.random.Random
@@ -74,12 +75,15 @@ internal suspend fun <T> withRetry(
 open class BlockchainExplorerApi internal constructor(
     private val baseUrl: String,
     private val auth: SyncConfig.BlockStream.Auth?,
-    httpClient: HttpClient?
+    httpClient: HttpClient?,
+    esploraFirst: Boolean,
 ) {
-    constructor(baseUrl: String, httpClient: HttpClient? = null) : this(baseUrl, null, httpClient)
+    constructor(baseUrl: String, httpClient: HttpClient? = null) :
+        this(baseUrl, null, httpClient, esploraFirst = false)
 
+    // Blockstream runs Esplora, so its fees come from /fee-estimates without a 404 probe.
     constructor(config: SyncConfig.BlockStream, httpClient: HttpClient? = null) :
-        this(config.baseUrl, config.auth, httpClient)
+        this(config.baseUrl, config.auth, httpClient, esploraFirst = true)
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -261,35 +265,40 @@ open class BlockchainExplorerApi internal constructor(
         client.get(url).body()
     }
 
-    // Which fee endpoint this backend serves: null until the first fee request finds out. A
-    // race between two first requests only costs one extra request.
-    private var servesRecommendedFees: Boolean? = null
+    // The fee endpoint to try first: set from the config, then to the one that last answered.
+    @Volatile
+    private var esploraFees = esploraFirst
 
     /**
-     * Get recommended fee rates from mempool.space's `/v1/fees/recommended`. A backend that
-     * answers it with 404, as Esplora does (Blockstream, self-hosted electrs), is asked for
-     * `/fee-estimates` instead, mapped onto the same tiers by [esploraFeeEstimates]; this
-     * instance then asks that endpoint directly.
+     * Get recommended fee rates: mempool.space's `/v1/fees/recommended`, or Esplora's
+     * `/fee-estimates` (Blockstream, self-hosted electrs) mapped onto the same tiers by
+     * [esploraFeeEstimates]. When the endpoint tried first answers 404, the other one is
+     * tried, and it is tried first from then on if it answers.
      */
     suspend fun getRecommendedFees(): FeeEstimates {
-        if (servesRecommendedFees != false) {
+        val first = esploraFees
+        feesFrom(esplora = first)?.let { return it }
+        val fees = feesFrom(esplora = !first)
+            ?: throw IllegalStateException("$baseUrl serves neither /v1/fees/recommended nor /fee-estimates")
+        esploraFees = !first
+        return fees
+    }
+
+    /** Fee rates from one endpoint, or null when the backend answers 404 there. */
+    private suspend fun feesFrom(esplora: Boolean): FeeEstimates? {
+        val path = if (esplora) "/fee-estimates" else "/v1/fees/recommended"
+        val response = withRetry {
+            log.d { "GET $path" }
             try {
-                val fees: FeeEstimates = withRetry {
-                    log.d { "GET /v1/fees/recommended" }
-                    client.get("$baseUrl/v1/fees/recommended").body()
-                }
-                servesRecommendedFees = true
-                return fees
+                client.get("$baseUrl$path")
             } catch (e: ClientRequestException) {
                 if (e.response.status != HttpStatusCode.NotFound) throw e
-                servesRecommendedFees = false
+                e.response
             }
         }
-        val estimates: Map<String, Double> = withRetry {
-            log.d { "GET /fee-estimates" }
-            client.get("$baseUrl/fee-estimates").body()
-        }
-        return esploraFeeEstimates(estimates)
+        // Checked here as well for a caller-supplied client without expectSuccess.
+        if (response.status == HttpStatusCode.NotFound) return null
+        return if (esplora) esploraFeeEstimates(response.body<Map<String, Double>>()) else response.body<FeeEstimates>()
     }
 
     /**
@@ -432,9 +441,10 @@ private const val MIN_RELAY_FEE_RATE = 1
 /**
  * Maps Esplora's `/fee-estimates` (confirmation target in blocks to sat/vB) onto
  * [FeeEstimates] the way mempool.space's tiers read: fastest = 1 block, half hour = 3,
- * hour = 6, economy = 144, and minimum = the lowest quote. A target Esplora doesn't list
- * takes the next faster one it does list, or the fastest listed if none is. Like
- * mempool.space, a slower tier is capped at the faster one.
+ * hour = 6, economy = 144. A target Esplora doesn't list takes the next faster one it does
+ * list, or the fastest listed if none is. Like mempool.space, a faster tier is raised to any
+ * slower tier that quotes more. Esplora has no mempool minimum fee, so `minimumFee` is the
+ * 1 sat/vB relay floor.
  *
  * Rates are rounded up to whole sat/vB, never below the 1 sat/vB minimum relay fee. Bitcoin
  * Core quotes whole sat/kvB and Esplora converts them with a floating-point multiply, so a
@@ -452,11 +462,11 @@ internal fun esploraFeeEstimates(estimates: Map<String, Double>): FeeEstimates {
         return satPerVbyte(byTarget.getValue(listed))
     }
 
-    val fastest = rate(1)
-    val halfHour = minOf(rate(3), fastest)
-    val hour = minOf(rate(6), halfHour)
-    val economy = minOf(rate(144), hour)
-    return FeeEstimates(fastest, halfHour, hour, economy, minimumFee = satPerVbyte(byTarget.values.min()))
+    val economy = rate(144)
+    val hour = maxOf(rate(6), economy)
+    val halfHour = maxOf(rate(3), hour)
+    val fastest = maxOf(rate(1), halfHour)
+    return FeeEstimates(fastest, halfHour, hour, economy, minimumFee = MIN_RELAY_FEE_RATE)
 }
 
 @Serializable
