@@ -8,7 +8,19 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 ## [Unreleased]
 
-_No changes yet._
+### Fixed
+
+- `BitcoinKit.getRecommendedFees()` on Esplora backends (Blockstream, self-hosted
+  electrs through `SyncConfig.CustomApi`). It only asked for mempool.space's
+  `/v1/fees/recommended`, which Esplora answers with 404, so it always returned null.
+  It now also reads Esplora's `/fee-estimates`: a `SyncConfig.BlockStream` asks that
+  first, other configs ask `/v1/fees/recommended` first, and on a 404 either one
+  switches to the other endpoint and keeps using it once it answers. The 1, 3, 6 and 144
+  block targets map to `fastestFee`, `halfHourFee`, `hourFee` and `economyFee`. Rates
+  are rounded up to whole sat/vB (after rounding to sat/kvB, so floating-point noise
+  adds nothing), never below 1 sat/vB, and, as on mempool.space, a faster tier is raised
+  to any slower tier that quotes more. Esplora has no mempool minimum fee, so
+  `minimumFee` is the 1 sat/vB relay floor.
 
 ## [0.7.0] - 2026-09-27
 
