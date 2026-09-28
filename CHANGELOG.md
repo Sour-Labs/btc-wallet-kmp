@@ -8,6 +8,15 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 ## [Unreleased]
 
+### Changed
+
+- A send with `subtractFeeFromAmount` now keeps change from its script type's dust
+  limit up to 546 sats (294 to 546 for P2WPKH, 330 to 546 for P2TR, 540 to 546 for
+  P2SH-P2WPKH, exactly 546 for P2PKH), which it used to give to the miner. When the fee for that change
+  output leaves the destination below its dust limit, the send now fails with
+  `InvalidAmountException`, as in Bitcoin Core. For example, 1,500 sats from a
+  1,900-sat P2WPKH coin at 10 sat/vB used to send 390 sats and now fails.
+
 ### Fixed
 
 - `BitcoinKit.getRecommendedFees()` on Esplora backends (Blockstream, self-hosted
@@ -27,16 +36,13 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
   (294 sats for P2WPKH, 330 for P2TR, 540 for P2SH-P2WPKH, 546 for P2PKH), and keeps
   change equal to the limit (Core's `IsDust` is `value < limit`). This is the floor
   of Core's wallet rule: Core computes the limit at its discard fee rate, which is
-  its longest-horizon fee estimate kept between 3 and 10 sat/vB, so Core drops more
-  change (up to 980 sats for P2WPKH) when that estimate is above 3 sat/vB. The
+  its longest-horizon fee estimate kept between 3 and 10 sat/vB, or 10 sat/vB when
+  it has no estimate. At 10 sat/vB Core drops P2WPKH change below 980 sats. The
   library has no such estimate and uses 3 sat/vB. This affects every call that
   selects coins: `sendInfo`, `createTransaction`, `send`, `buildPsbt` and
   `TransactionCreator.createWithUtxos`. For example, a P2WPKH send of 600 sats from
   coins of 600 and 684 sats at 1 sat/vB now pays a 210-sat fee and returns 474 sats
-  of change, where it used to pay 684. A send with `subtractFeeFromAmount` now keeps
-  change of 294 to 546 sats too; when that change output's fee leaves the destination
-  below dust, the send fails with `InvalidAmountException`, as in Core, where it used
-  to give the change to the miner.
+  of change, where it used to pay 684.
 
 ## [0.7.0] - 2026-09-27
 

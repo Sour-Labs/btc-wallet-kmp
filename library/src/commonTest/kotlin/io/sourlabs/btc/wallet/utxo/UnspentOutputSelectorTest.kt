@@ -300,8 +300,13 @@ class UnspentOutputSelectorTest {
         walletScriptType: ScriptType,
         change: Long,
         subtractFeeFromAmount: Boolean = false,
-        selector: UnspentOutputSelector = UnspentOutputSelector(walletScriptType),
+        dustThreshold: Long? = null,
     ): SelectionResult {
+        val selector = if (dustThreshold == null) {
+            UnspentOutputSelector(walletScriptType)
+        } else {
+            UnspentOutputSelector(walletScriptType, dustThreshold)
+        }
         val totalInput = 100_000L
         val feeRate = 1L
         val feeWithChange = FeeCalculator.estimateFee(
@@ -341,8 +346,7 @@ class UnspentOutputSelectorTest {
 
     @Test
     fun explicitDustThresholdOverridesTheScriptTypeDefault() {
-        val selector = UnspentOutputSelector(ScriptType.P2WPKH, dustThreshold = 546)
-        assertEquals(546L, selectWithChange(ScriptType.P2WPKH, 546, selector = selector).change)
-        assertEquals(0L, selectWithChange(ScriptType.P2WPKH, 545, selector = selector).change)
+        assertEquals(546L, selectWithChange(ScriptType.P2WPKH, 546, dustThreshold = 546).change)
+        assertEquals(0L, selectWithChange(ScriptType.P2WPKH, 545, dustThreshold = 546).change)
     }
 }

@@ -345,25 +345,34 @@ class TransactionCreatorTest {
      * With subtractFeeFromAmount, a residual at or above the change dust limit
      * stays change even when the change output's fee leaves the destination
      * below dust. The send must fail, as in Bitcoin Core, rather than drop the
-     * change to rescue the destination: here that would give 98,500 sats to
-     * the miner.
+     * change to rescue the destination. With a 1,900-sat coin that would give
+     * 400 sats to the miner (what the old fixed 546 limit did); with a
+     * 100,000-sat coin, 98,500.
      */
     @Test
     fun subtractFeeRejectsSubDustDestinationInsteadOfDroppingChange() = runTest {
-        val f = newFixture()
-        f.publicKeyManager.initialize()
-        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
-        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+        for (coin in listOf(1_900L, 100_000L)) {
+            val f = newFixture()
+            f.publicKeyManager.initialize()
+            val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+            f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, coin))
 
-        // At 10 sat/vB the fee is 1,420 with change and 1,110 without: the destination
-        // gets 1,500 − 1,420 = 80 (dust), or 390 if the 98,500 sats of change were dropped.
-        assertFailsWith<InvalidAmountException> {
-            f.creator.create(
-                toAddress = externalDestination,
-                amount = 1_500,
-                feeRate = 10,
-                subtractFeeFromAmount = true,
-            )
+            // At 10 sat/vB the fee is 1,420 with change and 1,110 without: the destination
+            // gets 1,500 − 1,420 = 80 (dust), or 390 if the change were dropped.
+            val ex = assertFailsWith<InvalidAmountException>("coin $coin") {
+                f.creator.create(
+                    toAddress = externalDestination,
+                    amount = 1_500,
+                    feeRate = 10,
+                    subtractFeeFromAmount = true,
+                )
+            }
+            assertContains(ex.message!!, "would receive 80 sats")
+
+            assertEquals(1, f.storage.unspentOutputStorage.getAllUtxos().size, "UTXO must not be deleted")
+            assertEquals(0, f.publicKeyManager.getExternalPublicKeys().count { it.isUsed })
+            assertEquals(0, f.publicKeyManager.getInternalPublicKeys().count { it.isUsed })
+            assertEquals(0, f.storage.transactionStorage.getTransactions().size, "no PENDING tx must be persisted")
         }
     }
 
