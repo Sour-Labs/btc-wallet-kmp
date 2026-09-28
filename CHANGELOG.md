@@ -8,6 +8,10 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [0.7.1] - 2026-09-28
+
 ### Changed
 
 - A send with `subtractFeeFromAmount` now keeps change from its script type's dust
@@ -275,7 +279,8 @@ Central upload.
   in distributed client binaries — anyone with the APK/IPA can extract it.
   Production setups should proxy through a backend.
 
-[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Sour-Labs/btc-wallet-kmp/compare/v0.5.1...v0.6.0
