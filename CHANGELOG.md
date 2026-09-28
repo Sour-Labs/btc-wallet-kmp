@@ -23,11 +23,20 @@ Until `1.0.0`, treat every `0.x → 0.y` bump as potentially breaking.
   `minimumFee` is the 1 sat/vB relay floor.
 - Change below 546 sats is no longer given to the miner when the change output's
   script type has a lower dust limit. `UnspentOutputSelector` now defaults its
-  `dustThreshold` to Bitcoin Core's limit for the wallet's script type (294 sats for
-  P2WPKH, 330 for P2TR, 540 for P2SH-P2WPKH, 546 for P2PKH), and keeps change equal
-  to the limit, as Core does. This applies to signed sends and to `buildPsbt`. For
-  example, a P2WPKH send of 600 sats from coins of 600 and 684 sats at 1 sat/vB now
-  pays a 210-sat fee and returns 474 sats of change, where it used to pay 684.
+  `dustThreshold` to Bitcoin Core's relay dust limit for the wallet's script type
+  (294 sats for P2WPKH, 330 for P2TR, 540 for P2SH-P2WPKH, 546 for P2PKH), and keeps
+  change equal to the limit (Core's `IsDust` is `value < limit`). This is the floor
+  of Core's wallet rule: Core computes the limit at its discard fee rate, which is
+  its longest-horizon fee estimate kept between 3 and 10 sat/vB, so Core drops more
+  change (up to 980 sats for P2WPKH) when that estimate is above 3 sat/vB. The
+  library has no such estimate and uses 3 sat/vB. This affects every call that
+  selects coins: `sendInfo`, `createTransaction`, `send`, `buildPsbt` and
+  `TransactionCreator.createWithUtxos`. For example, a P2WPKH send of 600 sats from
+  coins of 600 and 684 sats at 1 sat/vB now pays a 210-sat fee and returns 474 sats
+  of change, where it used to pay 684. A send with `subtractFeeFromAmount` now keeps
+  change of 294 to 546 sats too; when that change output's fee leaves the destination
+  below dust, the send fails with `InvalidAmountException`, as in Core, where it used
+  to give the change to the miner.
 
 ## [0.7.0] - 2026-09-27
 

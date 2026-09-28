@@ -293,12 +293,14 @@ class UnspentOutputSelectorTest {
 
     /**
      * Spends one coin of the wallet's own type with a target chosen so the
-     * change comes out at exactly [change] sats.
+     * change comes out at exactly [change] sats. `select` and `selectManual`
+     * must agree on the result.
      */
     private fun selectWithChange(
         walletScriptType: ScriptType,
         change: Long,
         subtractFeeFromAmount: Boolean = false,
+        selector: UnspentOutputSelector = UnspentOutputSelector(walletScriptType),
     ): SelectionResult {
         val totalInput = 100_000L
         val feeRate = 1L
@@ -306,12 +308,14 @@ class UnspentOutputSelectorTest {
             listOf(walletScriptType), listOf(p2wpkhDestination, walletScriptType), feeRate,
         )
         val target = if (subtractFeeFromAmount) totalInput - change else totalInput - feeWithChange - change
-        val result = UnspentOutputSelector(walletScriptType).select(
-            listOf(createUtxo(totalInput, scriptType = walletScriptType)), target, feeRate, p2wpkhDestination,
+        val utxos = listOf(createUtxo(totalInput, scriptType = walletScriptType))
+        val result = selector.select(
+            utxos, target, feeRate, p2wpkhDestination,
             subtractFeeFromAmount = subtractFeeFromAmount,
         )
         assertNotNull(result)
         assertEquals(result.totalInput, result.sendAmount + result.fee + result.change)
+        assertEquals(result, selector.selectManual(utxos, target, feeRate, p2wpkhDestination, subtractFeeFromAmount))
         return result
     }
 
@@ -333,5 +337,12 @@ class UnspentOutputSelectorTest {
     fun subtractFeeChangeDustLimitFollowsWalletScriptType() {
         assertEquals(294L, selectWithChange(ScriptType.P2WPKH, 294, subtractFeeFromAmount = true).change)
         assertEquals(0L, selectWithChange(ScriptType.P2WPKH, 293, subtractFeeFromAmount = true).change)
+    }
+
+    @Test
+    fun explicitDustThresholdOverridesTheScriptTypeDefault() {
+        val selector = UnspentOutputSelector(ScriptType.P2WPKH, dustThreshold = 546)
+        assertEquals(546L, selectWithChange(ScriptType.P2WPKH, 546, selector = selector).change)
+        assertEquals(0L, selectWithChange(ScriptType.P2WPKH, 545, selector = selector).change)
     }
 }

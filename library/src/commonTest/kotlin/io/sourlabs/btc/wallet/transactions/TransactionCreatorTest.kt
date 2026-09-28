@@ -324,6 +324,50 @@ class TransactionCreatorTest {
     }
 
     /**
+     * Change above the P2WPKH dust limit (294) but below the old fixed 546 is
+     * kept: 600 sats from coins of 600 and 684 at 1 sat/vB pays 210, not 684.
+     */
+    @Test
+    fun keepsChangeAboveP2wpkhDustLimit() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 600))
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[1], f.converter, 2, 684))
+
+        val tx = f.creator.create(externalDestination, amount = 600, feeRate = 1)
+
+        assertEquals(210, tx.fee)
+        assertEquals(listOf(474L, 600L), tx.transaction.txOut.map { it.amount.toLong() }.sorted())
+    }
+
+    /**
+     * With subtractFeeFromAmount, a residual at or above the change dust limit
+     * stays change even when the change output's fee leaves the destination
+     * below dust. The send must fail, as in Bitcoin Core, rather than drop the
+     * change to rescue the destination: here that would give 98,500 sats to
+     * the miner.
+     */
+    @Test
+    fun subtractFeeRejectsSubDustDestinationInsteadOfDroppingChange() = runTest {
+        val f = newFixture()
+        f.publicKeyManager.initialize()
+        val externalKeys = f.publicKeyManager.getExternalPublicKeys().sortedBy { it.index }
+        f.storage.unspentOutputStorage.saveUtxo(utxoBoundTo(externalKeys[0], f.converter, 1, 100_000))
+
+        // At 10 sat/vB the fee is 1,420 with change and 1,110 without: the destination
+        // gets 1,500 − 1,420 = 80 (dust), or 390 if the 98,500 sats of change were dropped.
+        assertFailsWith<InvalidAmountException> {
+            f.creator.create(
+                toAddress = externalDestination,
+                amount = 1_500,
+                feeRate = 10,
+                subtractFeeFromAmount = true,
+            )
+        }
+    }
+
+    /**
      * Sending the wallet's exact balance with subtractFeeFromAmount is the
      * canonical use of the flag. It used to fail with InsufficientFunds because
      * selection demanded totalInput ≥ amount + fee even in subtract-fee mode.

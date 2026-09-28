@@ -85,9 +85,10 @@ data class SelectionResult(
  *   own scriptType; this is the fallback when a hypothetical input is being
  *   sized without a chosen UTXO).
  * @param dustThreshold change outputs smaller than this are absorbed into the
- *   fee instead of being emitted. Defaults to Bitcoin Core's dust limit for the
- *   change output's own script type ([FeeCalculator.dustThreshold]): 294 sats
- *   for P2WPKH, 330 for P2TR, 540 for P2SH-P2WPKH, 546 for P2PKH.
+ *   fee instead of being emitted. Defaults to Bitcoin Core's relay dust limit
+ *   (3 sat/vB) for [walletScriptType]: 294 sats for P2WPKH, 330 for P2TR,
+ *   540 for P2SH-P2WPKH, 546 for P2PKH. Like the fee estimate, this assumes the
+ *   change output pays to [walletScriptType].
  */
 class UnspentOutputSelector(
     private val walletScriptType: ScriptType,
